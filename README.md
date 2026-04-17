@@ -7,7 +7,7 @@ This project is supported by France 2030 in partnership with the Health Data Hub
 
 ## The vision behind ANNITIA
 
-Metabolic dysfunction-associated steatotic liver disease (MASLD) is characterized by excessive fat accumulation in the liver that occurs without high alcohol consumption and affects approximately 30% of the worlds population. The spectrum of the disease ranges from simple steatosis to more advancing forms, including steatohepatitis (MASH  steatosis accompanied by inflammation and ballooning), that when persistent leads to the formation of scar tissue, known a fibrosis. Liver fibrosis is graded on a scale from F0 to F4 indicating, respectively, the absence of fibrosis to the most advanced stage  cirrhosis. The final stage of liver fibrosis (F4) increases the risk of liver-related events, such as ascites (fluid in the abdomen), jaundice (yellowing of the skin/eyes), or hepatic encephalopathy, esophageal varices (bleeding), hepatocellular carcinoma, liver transplantation, as well as death.
+Metabolic dysfunction-associated steatotic liver disease (MASLD) is characterized by excessive fat accumulation in the liver that occurs without high alcohol consumption and affects approximately 30% of the world's population. The spectrum of the disease ranges from simple steatosis to more advancing forms, including steatohepatitis (MASH steatosis accompanied by inflammation and ballooning), that when persistent leads to the formation of scar tissue, known a fibrosis. Liver fibrosis is graded on a scale from F0 to F4 indicating, respectively, the absence of fibrosis to the most advanced stage  cirrhosis. The final stage of liver fibrosis (F4) increases the risk of liver-related events, such as ascites (fluid in the abdomen), jaundice (yellowing of the skin/eyes), or hepatic encephalopathy, esophageal varices (bleeding), hepatocellular carcinoma, liver transplantation, as well as death.
 
 ![Spectrum](images/masld_spectrum.png)
 
@@ -26,10 +26,10 @@ The goal of the ANNITIA challenge is to use clinical data and non-invasive tests
 
 The competitors will have access to data from 1,676 synthetic patients. The dataset includes:
 
-    Clinical data: age at baseline, gender, BMI (during follow-up), and medical history (diabetes, hypertension, dyslipidemia and bariatric surgery).
-    Biochemical parameters (from baseline to follow-up): repeated measurements of ALT, AST, GGT, bilirubin, platelets, glycemia, triglycerides, total-cholesterol.
-    Biomarkers (NIT, from baseline to follow-up): repeated measurements of FibroTest, FibroScan and Aixplorer.
-    Outcomes: occurrence of major liver events and all-cause mortality.
+Clinical data: age at baseline, gender, BMI (during follow-up), and medical history (diabetes, hypertension, dyslipidemia and bariatric surgery).
+Biochemical parameters (from baseline to follow-up): repeated measurements of ALT, AST, GGT, bilirubin, platelets, glycemia, triglycerides, total-cholesterol.
+Biomarkers (NIT, from baseline to follow-up): repeated measurements of FibroTest, FibroScan and Aixplorer.
+Outcomes: occurrence of major liver events and all-cause mortality.
 
 
 ### Building a comprehensive dataset
@@ -38,9 +38,9 @@ A critical component of this challenge is the creation of a large dataset of pat
 
 The ANNITIA team has explored the clinical records of thousands of patients (who allowed it) at Pitié-Salpêtrière Hospital in Paris. In order to protect patients from any reidentification risks, synthetic data were created from the original clinical database. Thus, the following dataset features for each synthetical patient are available:
 
-    - 22 data points describing the patient over time of each examen performed, with the corresponding age, BMI and biochemical parameters.
-    - Up to 3 NITs usually measured for assessing fibrosis progression.
-    - One outcome column summarizing the liver-related events (composite endpoint) occurred by the patient during the follow-up and the time of the diagnosis: to be predicted.
-    - One outcome column informing the death status (all-cause mortality): to be predicted.
+22 data points describing the patient over time of each examen performed, with the corresponding age, BMI and biochemical parameters.
+Up to 3 NITs usually measured for assessing fibrosis progression.
+One outcome column summarizing the liver-related events (composite endpoint) occurred by the patient during the follow-up and the time of the diagnosis: to be predicted.
+One outcome column informing the death status (all-cause mortality): to be predicted.
 
 This extended dataset provides an ideal foundation for training and evaluating machine learning models, offering participants a great opportunity to work with synthetic data generated from real-world medical data.
