@@ -28,6 +28,9 @@ def _():
     from sklearn.preprocessing import StandardScaler
     from sklearn.pipeline import Pipeline
     from sklearn.model_selection import KFold, GridSearchCV
+    from sklearn.base import BaseEstimator
+    from sklearn.feature_selection import RFECV
+    from sklearn.inspection import permutation_importance
 
     return IterativeImputer, KFold, Pipeline
 
@@ -45,7 +48,8 @@ def _():
     from sksurv.util import Surv
     from sksurv.metrics import concordance_index_censored
     from sksurv.linear_model import CoxnetSurvivalAnalysis
-    from sksurv.ensemble import RandomSurvivalForest
+    from sksurv.ensemble import RandomSurvivalForest, GradientBoostingSurvivalAnalysis
+
 
     return RandomSurvivalForest, Surv, concordance_index_censored
 
@@ -79,6 +83,8 @@ def _():
 
 @app.cell
 def _():
+    import umap
+
     return
 
 
@@ -115,7 +121,7 @@ def _():
 def _(TEST_PATH, TRAIN_PATH, pd):
     df = pd.read_csv(TRAIN_PATH)
     test_df = pd.read_csv(TEST_PATH)
-    return (df,)
+    return df, test_df
 
 
 @app.cell
@@ -142,9 +148,7 @@ def _(mo):
 
     Evaluation par le TableReport
 
-    Evaluation d'un one hot encoding sur les variables T2DM, Hypertension, dyslipidaemia, batriatric_surgery
-
-    Supression des colonnes ayant un taux elevé de colonnes manquantes (>50%) et imputation par la médiane (ou Iterative Imputer)
+    One hot encoding sur les variables T2DM, Hypertension, dyslipidaemia, bariatric_surgery
     """)
     return
 
@@ -152,50 +156,8 @@ def _(mo):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## 2.0 Création de la colonne ALT/ AST
+ 
     """)
-    return
-
-
-@app.cell
-def _(np):
-
-    def create_alt_ast_ratio(df, max_visit=21):
-        df = df.copy()
-    
-        for v in range(1, max_visit + 1):
-            alt_col = f'alt_v{v}'
-            ast_col = f'ast_v{v}'
-            new_col = f'alt_ast_v{v}'
-        
-            if alt_col in df.columns and ast_col in df.columns:
-                df[new_col] = np.where(
-                    df[alt_col].notna() & df[ast_col].notna(),
-                    df[alt_col] / df[ast_col],
-                    np.nan
-                )
-            else:
-                # Si une des colonnes n'existe pas → colonne remplie de NA
-                df[new_col] = np.nan
-    
-        # Drop toutes les colonnes ALT et AST
-        cols_to_drop = [col for col in df.columns if col.startswith('alt_v') or col.startswith('ast_')]
-        #df = df.drop(columns=cols_to_drop)
-    
-        return df
-
-    return (create_alt_ast_ratio,)
-
-
-@app.cell
-def _(create_alt_ast_ratio, df):
-    df1 = create_alt_ast_ratio(df, max_visit=21)
-    return (df1,)
-
-
-@app.cell
-def _(TableReport, df1):
-    TableReport(df1)
     return
 
 
@@ -222,37 +184,71 @@ def _():
 def _(np):
     def create_change_scores(df, baseline_visit=1):
         df = df.copy()
-    
+
         # Colonnes longitudinales
         long_cols = [col for col in df.columns if "_v" in col]
-    
+
         # Préfixes (BMI, alt, etc.)
         prefixes = set(col.rsplit("_v", 1)[0] for col in long_cols)
-    
+
         for prefix in prefixes:
             baseline_col = f"{prefix}_v{baseline_visit}"
-        
+
             if baseline_col not in df.columns:
                 continue
-        
+
             visit_cols = [col for col in df.columns if col.startswith(prefix + "_v")]
-        
+
             for col in visit_cols:
                 visit_num = col.split("_v")[-1]
-            
+
                 if col == baseline_col:
                     continue
-            
+
                 new_col = f"change_{prefix}_v{visit_num}"
-            
+
                 df[new_col] = np.where(
                     df[col].notna() & df[baseline_col].notna(),
                     (df[col] - df[baseline_col]) / df[baseline_col] * 100, 
-                    #(df[col] - df[baseline_col]) / df[baseline_col].std(),
-                    #df[col] - df[baseline_col],
                     np.nan
                 )
-    
+
+        return df
+
+
+    def create_change_scores_previous(df):
+        df = df.copy()
+
+        # Colonnes longitudinales
+        long_cols = [col for col in df.columns if "_v" in col]
+
+        # Préfixes (BMI, alt, etc.)
+        prefixes = set(col.rsplit("_v", 1)[0] for col in long_cols)
+
+        for prefix in prefixes:
+            visit_cols = [col for col in df.columns if col.startswith(prefix + "_v")]
+
+            # Trier les visites par numéro
+            visit_cols = sorted(
+                visit_cols,
+                key=lambda x: int(x.split("_v")[-1])
+            )
+
+            for i in range(1, len(visit_cols)):
+                prev_col = visit_cols[i - 1]
+                col = visit_cols[i]
+
+                prev_visit = prev_col.split("_v")[-1]
+                visit_num = col.split("_v")[-1]
+
+                new_col = f"change_{prefix}_v{visit_num}"
+
+                df[new_col] = np.where(
+                    df[col].notna() & df[prev_col].notna() & (df[prev_col] != 0),
+                    (df[col] - df[prev_col]) / df[prev_col] * 100,
+                    np.nan
+                )
+
         return df
 
     return (create_change_scores,)
@@ -264,98 +260,98 @@ def _(BIOMARKERS, np, pd):
 
     def compute_patient_slopes(df, biomarkers = BIOMARKERS, max_visit=22):
         df = df.copy()
-    
+
         for biom in biomarkers:
             values = []
             ages = []
-        
+
             # Construire matrices (patients x visites)
             for v in range(1, max_visit+1):
                 val_col = f"{biom}_v{v}"
                 age_col = f"Age_v{v}"
-            
+
                 if val_col in df.columns and age_col in df.columns:
                     values.append(df[val_col])
                     ages.append(df[age_col])
-        
+
             if len(values) < 2:
                 df[f"slope_{biom}"] = np.nan
                 continue
-        
+
             values = pd.concat(values, axis=1)
             ages = pd.concat(ages, axis=1)
-        
+
             slopes = []
-        
+
             for i in range(len(df)):
                 x = ages.iloc[i].values
                 y = values.iloc[i].values
-            
+
                 mask = ~np.isnan(x) & ~np.isnan(y)
-            
+
                 if mask.sum() < 2:
                     slopes.append(np.nan)
                 else:
                     slope = np.polyfit(x[mask], y[mask], 1)[0]
                     slopes.append(slope)
-        
+
             df[f"slope_{biom}"] = slopes
-    
+
         return df
 
     def compute_patient_slopes_theilsen(df, biomarkers = BIOMARKERS, max_visit=22):
         df = df.copy()
-    
+
         def theil_sen_slope(x, y):
             slopes = []
             n = len(x)
-        
+
             for i in range(n):
                 for j in range(i+1, n):
                     if x[j] != x[i]:
                         slopes.append((y[j] - y[i]) / (x[j] - x[i]))
-        
+
             if len(slopes) == 0:
                 return np.nan
-        
+
             return np.median(slopes)
-    
+
         for biom in biomarkers:
             values = []
             ages = []
-        
+
             for v in range(1, max_visit+1):
                 val_col = f"{biom}_v{v}"
                 age_col = f"Age_v{v}"
-            
+
                 if val_col in df.columns and age_col in df.columns:
                     values.append(df[val_col])
                     ages.append(df[age_col])
-        
+
             if len(values) < 2:
                 df[f"slope_ts_{biom}"] = np.nan
                 continue
-        
+
             values = pd.concat(values, axis=1)
             ages = pd.concat(ages, axis=1)
-        
+
             slopes = []
-        
+
             for i in range(len(df)):
                 x = ages.iloc[i].values
                 y = values.iloc[i].values
-            
+
                 mask = ~np.isnan(x) & ~np.isnan(y)
                 x = x[mask]
                 y = y[mask]
-            
+
                 if len(x) < 2:
                     slopes.append(np.nan)
                 else:
                     slopes.append(theil_sen_slope(x, y))
-        
+
             df[f"slope_ts_{biom}"] = slopes
-    
+
         return df
 
     return (compute_patient_slopes_theilsen,)
@@ -364,19 +360,19 @@ def _(BIOMARKERS, np, pd):
 @app.function
 def count_non_na_longitudinal(df):
     df = df.copy()
-    
+
     # Identifier toutes les variables longitudinales (suffixe _vX)
     long_cols = [col for col in df.columns if "_v" in col]
-    
+
     # Extraire les "préfixes" (ex: BMI, alt, ast, etc.)
     prefixes = set(col.rsplit("_v", 1)[0] for col in long_cols)
-    
+
     for prefix in prefixes:
         cols = [col for col in df.columns if col.startswith(prefix + "_v")]
-        
+
         # Compter les valeurs non NA par ligne
         df[f"n_{prefix}"] = df[cols].notna().sum(axis=1)
-    
+
     return df
 
 
@@ -386,39 +382,39 @@ def _(BIOMARKERS, np):
     def add_first_last_visits(df, biomarkers = BIOMARKERS, max_visit=22):
 
         df = df.copy()
-    
+
         for biom in biomarkers:
             biom_cols = [f"{biom}_v{i}" for i in range(1, max_visit+1) if f"{biom}_v{i}" in df.columns]
-        
+
             if not biom_cols:
                 df[f"first_{biom}"] = np.nan
                 df[f"last_{biom}"] = np.nan
                 continue
-        
+
             # DataFrame temporaire
             data = df[biom_cols]
-        
+
             # Booléen : valeur présente ou non
             mask = data.notna()
-        
+
             # Numéros de visite
             visit_numbers = np.array([int(col.split("_v")[1]) for col in biom_cols])
-        
+
             # Première visite
             first_visit = mask.apply(
                 lambda row: visit_numbers[row.values].min() if row.any() else np.nan,
                 axis=1
             )
-        
+
             # Dernière visite
             last_visit = mask.apply(
                 lambda row: visit_numbers[row.values].max() if row.any() else np.nan,
                 axis=1
             )
-        
+
             df[f"first_{biom}"] = first_visit
             df[f"last_{biom}"] = last_visit
-    
+
         return df
 
     return
@@ -429,24 +425,24 @@ def _(np):
 
     def add_visit_metrics(df, max_visit=22):
         df = df.copy()
-    
+
         # Toutes les colonnes longitudinales
         long_cols = [col for col in df.columns if "_v" in col]
-    
+
         for v in range(1, max_visit + 1):
             # Colonnes de la visite v
             visit_cols = [col for col in long_cols if col.endswith(f"_v{v}")]
-        
+
             if visit_cols:
                 # Nombre de mesures non NA à cette visite
                 df[f"n_measures_v{v}"] = df[visit_cols].notna().sum(axis=1)
             else:
                 df[f"n_measures_v{v}"] = np.nan
-        
+
             # Différence d'âge
             age_col = f"Age_v{v}"
             prev_age_col = f"Age_v{v-1}"
-        
+
             if v == 1:
                 df[f"age_diff_v{v}"] = np.nan
             else:
@@ -458,7 +454,7 @@ def _(np):
                     )
                 else:
                     df[f"age_diff_v{v}"] = np.nan
-    
+
         return df
 
     return (add_visit_metrics,)
@@ -469,73 +465,106 @@ def _(BIOMARKERS, np, pd):
 
     def add_patient_summary_metrics(df, biomarkers = BIOMARKERS, max_visit=22):
         df = df.copy()
-    
+
         # =========================
         # 1. AGE (global)
         # =========================
         age_cols = [f"Age_v{i}" for i in range(1, max_visit+1) if f"Age_v{i}" in df.columns]
-    
+
         age_diffs = []
         for i in range(1, len(age_cols)):
             age_diffs.append(df[age_cols[i]] - df[age_cols[i-1]])
-    
+
         if age_diffs:
             df["mean_age_diff"] = pd.concat(age_diffs, axis=1).mean(axis=1, skipna=True)
         else:
             df["mean_age_diff"] = np.nan
-    
+
         df["min_age"] = df[age_cols].min(axis=1, skipna=True)
         df["max_age"] = df[age_cols].max(axis=1, skipna=True)
         df["age_range"] = df["max_age"] - df["min_age"]
-    
+
         # =========================
         # 2. COMPLETUDE (global)
         # =========================
         long_cols = [col for col in df.columns if "_v" in col]
-    
+
         n_measures = []
         for v in range(1, max_visit+1):
             visit_cols = [col for col in long_cols if col.endswith(f"_v{v}")]
             if visit_cols:
                 n_measures.append(df[visit_cols].notna().sum(axis=1))
-    
+
         if n_measures:
             df["mean_n_measures"] = pd.concat(n_measures, axis=1).mean(axis=1, skipna=True)
         else:
             df["mean_n_measures"] = np.nan
-    
+
         # =========================
         # 3. BIOMARKERS (nouveau)
         # =========================
         for biom in biomarkers:
             biom_cols = [f"{biom}_v{i}" for i in range(1, max_visit+1) if f"{biom}_v{i}" in df.columns]
-        
+
             if not biom_cols:
                 continue
-        
+
             # --- min / max / range ---
             df[f"min_{biom}"] = df[biom_cols].min(axis=1, skipna=True)
             df[f"max_{biom}"] = df[biom_cols].max(axis=1, skipna=True)
             df[f"{biom}_range"] = df[f"max_{biom}"] - df[f"min_{biom}"]
-        
+
             # --- différences entre visites ---
             diffs = []
             for i in range(1, len(biom_cols)):
                 diffs.append(df[biom_cols[i]] - df[biom_cols[i-1]])
-        
+
             if diffs:
                 df[f"mean_{biom}_diff"] = pd.concat(diffs, axis=1).mean(axis=1, skipna=True)
             else:
                 df[f"mean_{biom}_diff"] = np.nan
-    
+
         return df
 
     return (add_patient_summary_metrics,)
 
 
 @app.cell
-def _():
-    return
+def _(np):
+
+
+    def add_exam_within_2y_count(df, age_prefix="Age_v", out_col="n_exams_within_2y"):
+        """
+        Compte, pour chaque patient, le nombre d'intervalles consécutifs
+        entre deux examens dont l'écart est <= 2 ans.
+
+        Exemple:
+        Age_v1 = 40, Age_v2 = 41.5, Age_v3 = 44
+        -> gaps = 1.5 et 2.5
+        -> out_col = 1
+        """
+        df = df.copy()
+
+        age_cols = [c for c in df.columns if c.startswith(age_prefix)]
+        if not age_cols:
+            raise ValueError(f"Aucune colonne trouvée avec le préfixe '{age_prefix}'")
+
+        # Trier les colonnes par numéro de visite
+        age_cols = sorted(age_cols, key=lambda x: int(x.split("_v")[-1]))
+
+        def count_gaps(row):
+            ages = row[age_cols].dropna().astype(float).values
+            if len(ages) < 2:
+                return 0
+
+            ages = np.sort(ages)
+            gaps = np.diff(ages)
+            return int(np.sum(gaps <= 2))
+
+        df[out_col] = df.apply(count_gaps, axis=1)
+        return df
+
+    return (add_exam_within_2y_count,)
 
 
 @app.cell(hide_code=True)
@@ -638,7 +667,6 @@ def _(np, re):
 
             visit_cols_to_drop.extend(biom_cols)
 
-
         # -----------------------------
         # 3. Drop colonnes longitudinales
         # -----------------------------
@@ -673,7 +701,22 @@ def _(df):
 
 @app.cell
 def _(
+    add_exam_within_2y_count,
     add_patient_summary_metrics,
+    add_visit_metrics,
+    create_change_scores,
+    df,
+    extract_last_available_values,
+    pd,
+):
+
+    train_df_hep = pd.get_dummies(extract_last_available_values(add_exam_within_2y_count(add_visit_metrics(add_patient_summary_metrics(create_change_scores(count_non_na_longitudinal(df)))))), columns=['gender', "T2DM",'Hypertension', 'Dyslipidaemia','bariatric_surgery'], drop_first=True)
+    return (train_df_hep,)
+
+
+@app.cell
+def _(
+    add_exam_within_2y_count,
     add_visit_metrics,
     compute_patient_slopes_theilsen,
     create_change_scores,
@@ -682,21 +725,13 @@ def _(
     pd,
 ):
 
-
-    train_df = pd.get_dummies(extract_last_available_values(add_visit_metrics(add_patient_summary_metrics(compute_patient_slopes_theilsen(create_change_scores(count_non_na_longitudinal(df)))))), columns=['gender', "T2DM",'Hypertension', 'Dyslipidaemia','bariatric_surgery'], drop_first=True)
-
-    return (train_df,)
+    train_df_death = pd.get_dummies(extract_last_available_values(add_exam_within_2y_count(add_visit_metrics(compute_patient_slopes_theilsen(create_change_scores(count_non_na_longitudinal(df)))))), columns=['gender', "T2DM",'Hypertension', 'Dyslipidaemia','bariatric_surgery'], drop_first=True)
+    return (train_df_death,)
 
 
 @app.cell
-def _(train_df):
-    train_df.columns
-    return
-
-
-@app.cell
-def _(TableReport, train_df):
-    TableReport(train_df)
+def _(TableReport, train_df_hep):
+    TableReport(train_df_hep)
     return
 
 
@@ -719,111 +754,259 @@ def _(mo):
 
 
 @app.cell
-def _(Surv, np, pd):
+def prepare_survival_targets_robust(Surv, np, pd):
+    def prepare_survival_targets_robust(
 
-
-    def prepare_survival_targets_custom(
         df: pd.DataFrame,
+
         outcome: str = "hepatic",
+
         baseline_col: str = "Age_v1",
+
         last_observed_col: str = "last_observed_age",
-        min_time: float = 1e-3,
+
+        min_time: float = 1e-1,
+
         drop_nonpositive_times: bool = True,
+
         return_report: bool = False,
+
     ):
+
+        """
+
+        Build a sksurv-compatible structured array for one survival endpoint.
+
+
+        Rules:
+
+          - event missing -> drop row
+
+          - event == 1 and event time missing -> drop row  
+
+          - event == 0 -> censored at last_observed_age - Age_v1
+
+          - negative times -> drop row if drop_nonpositive_times=True
+
+          - zero times -> clamped to min_time
+
+
+        Parameters
+
+        ----------
+
+        df : pd.DataFrame
+
+            Must contain baseline_col, last_observed_col, and the target columns.
+
+        outcome : str
+
+            "hepatic" or "death".
+
+        return_report : bool
+
+            If True, also returns a dict with filtering counts.
+
+
+        Returns
+
+        -------
+
+        df_valid : pd.DataFrame
+
+        y : structured np.ndarray
+
+        report : dict (optional)
+
+        """
+
+
         df = df.copy()
 
+        # Track raw inconsistencies BEFORE filtering
+        mask_negative_followup = (
+            df[last_observed_col].notna()
+            & df[baseline_col].notna()
+            & (df[last_observed_col] - df[baseline_col] < 0)
+        )
+    
+        n_negative_followup = mask_negative_followup.sum()
+
+    
+
+
         if outcome == "hepatic":
+
             event_col = "evenements_hepatiques_majeurs"
+
             time_col = "evenements_hepatiques_age_occur"
+
             event_name = "Hepatic_event"
 
-            # Event must be known
-            df = df[df[event_col].notna()].copy()
-            is_event = df[event_col].astype(int) == 1
-
-            # If event=1 → time must exist
-            valid = (~is_event) | df[time_col].notna()
-            df = df[valid].copy()
-
         elif outcome == "death":
+
             event_col = "death"
+
             time_col = "death_age_occur"
+
             event_name = "Death"
 
-            # 🔥 NOUVELLE RÈGLE
-            # event NaN → 0 (censuré)
-            df[event_col] = df[event_col].fillna(0)
-
-            is_event = df[event_col].astype(int) == 1
-
-            # Si event=1 → temps obligatoire
-            valid = (~is_event) | df[time_col].notna()
-            df = df[valid].copy()
-
         else:
-            raise ValueError(f"outcome must be 'hepatic' or 'death'")
 
-        # Recompute after filtering
+            raise ValueError(f"outcome must be 'hepatic' or 'death', got {outcome!r}")
+        mask_neg_censor = (
+        (df[event_col] == 0)
+        & df[last_observed_col].notna()
+        & df[baseline_col].notna()
+        & (df[last_observed_col] - df[baseline_col] < 0)
+    )
+        mask_neg_event_time = (
+        (df[event_col] == 1)
+        & df[time_col].notna()
+        & df[baseline_col].notna()
+        & (df[time_col] - df[baseline_col] < 0)
+    )
+
+
+        required_cols = [event_col, time_col, baseline_col, last_observed_col]
+
+        missing_required = [c for c in required_cols if c not in df.columns]
+
+        if missing_required:
+
+            raise ValueError(f"Missing required columns: {missing_required}")
+
+
+        n0 = len(df)
+
+
+        # Keep only rows where the event indicator is known
+
+        mask_event_known = df[event_col].notna()
+
+        df = df.loc[mask_event_known].copy()
+
+        n1 = len(df)
+
+
+        # Convert to binary event indicator
+
         is_event = df[event_col].astype(int) == 1
 
-        # Compute time
+
+        # For event rows, the event time must be known
+
+        mask_event_time_known = (~is_event) | df[time_col].notna()
+
+        df = df.loc[mask_event_time_known].copy()
+
+        n2 = len(df)
+
+
+        # Recompute event indicator after filtering
+
+        is_event = df[event_col].astype(int) == 1
+
+
+        # Survival time
+
         time_values = np.where(
+
             is_event,
+
             df[time_col] - df[baseline_col],
+
             df[last_observed_col] - df[baseline_col],
+
         ).astype(float)
 
-        # Clean invalid times
-        if drop_nonpositive_times:
-            mask_valid = time_values > 0
-            df = df.loc[mask_valid].copy()
-            time_values = time_values[mask_valid]
 
-        # Remove NaN / inf
+        # Remove obviously invalid times
+
+        if drop_nonpositive_times:
+
+            mask_valid_time = time_values >= 0
+
+            df = df.loc[mask_valid_time].copy()
+
+            time_values = time_values[mask_valid_time]
+
+        else:
+
+            # Keep them but clamp after
+
+            pass
+
+
+        # If any still negative due to numerical issues, drop them
+
         mask_finite = np.isfinite(time_values)
+
         df = df.loc[mask_finite].copy()
+
         time_values = time_values[mask_finite]
 
-        # Clamp small values
+
+        # Clamp zeros / tiny values
+
         time_values = np.maximum(time_values, min_time)
+
 
         is_event = (df[event_col].astype(int) == 1).to_numpy()
 
+
         y = Surv.from_arrays(
+
             event=is_event.astype(bool),
+
             time=time_values,
+
             name_event=event_name,
+
             name_time="Time_years",
+
         )
 
+
         if return_report:
+
             report = {
+
+                "n_initial": n0,
+
+                "n_after_event_known": n1,
+
+                "n_after_event_time_known": n2,
+
                 "n_final": len(df),
-                "event_rate": is_event.mean(),
+
+                "dropped_total": n0 - len(df),
+
+                "n_negative_followup_raw": int(n_negative_followup),
+
+                "n_negative_censor_time_raw": int(mask_neg_censor.sum()),
+            
+                "n_negative_event_time_raw": int(mask_neg_event_time.sum()),
+
                 "outcome": outcome,
+
             }
+
             return df.reset_index(drop=True), y, report
+
 
         return df.reset_index(drop=True), y
 
-    return (prepare_survival_targets_custom,)
+    return (prepare_survival_targets_robust,)
 
 
 @app.cell
-def _(prepare_survival_targets_custom, train_df):
+def _(prepare_survival_targets_robust, train_df_death, train_df_hep):
 
     # --- Sanity check ---
-    df_hep,   y_hep   = prepare_survival_targets_custom(train_df, outcome='hepatic')
-    df_death, y_death = prepare_survival_targets_custom(train_df, outcome='death')
-
-
+    df_hep,   y_hep  =prepare_survival_targets_robust(train_df_hep, outcome='hepatic')
+    df_death, y_death = prepare_survival_targets_robust(train_df_death, outcome='death')
     return df_death, df_hep, y_death, y_hep
-
-
-@app.cell
-def _():
-    return
 
 
 @app.cell(hide_code=True)
@@ -867,7 +1050,7 @@ def _(ID_COLS, MAX_MISSING_RATE, TARGET_COLS, df_death, df_hep):
     # Features with > MAX_MISSING_RATE missing in train collapse to a constant
     # after median imputation → the model memorises the imputed pattern instead
     # of a real signal (a form of overfitting).  Removing them first dramatically
-    # reduces feature/event ratio (261 → ~19) which is the primary cause of the
+    # reduces feature/event ratio  which is the primary cause of the
     # train/val gap.
     missing_rate_hep   = X_hep_raw.isna().mean()
     missing_rate_death = X_death_raw.isna().mean()
@@ -890,7 +1073,7 @@ def _(ID_COLS, MAX_MISSING_RATE, TARGET_COLS, df_death, df_hep):
     print(f'Death   features after missing filter : {len(keep_death)}  '
           f'(EPV = {int((df_death["death"]==1).sum())}/{len(keep_death)} = '
           f'{(df_death["death"]==1).sum()/len(keep_death):.2f})')
-    return X_death_aln, X_hep_aln
+    return X_death_aln, X_hep_aln, build_feature_matrix, keep_death, keep_hep
 
 
 @app.cell(hide_code=True)
@@ -927,7 +1110,9 @@ def _(
         return Pipeline([
             #('imp', SimpleImputer(strategy='median')),
             #('imp', IterativeImputer(ExtraTreesRegressor(n_estimators=50, random_state=0))),
-            ('imp', IterativeImputer()),
+            ('imp', IterativeImputer()), # max_iter=10 and tol =0.001
+
+
             ('rsf', RandomSurvivalForest(
                 n_estimators=100,
                 min_samples_leaf=20,   # was 10 — larger leaves → less variance
@@ -964,15 +1149,23 @@ def _(
 
         return np.mean(scores), np.std(scores)
 
-    return (cv_rsf,)
+
+    return cv_rsf, make_rsf_pipeline
 
 
 @app.cell
-def _(X_death_aln, cv_rsf, y_death):
-    print('Fitting Death — RSF (CV)...')
-    ci_rsf_death_mean, ci_rsf_death_std = cv_rsf(X_death_aln, y_death)
+def _():
+    from select_model import cv_rsf_rfecv
 
-    print(f'  RSF  C-index (CV): {ci_rsf_death_mean:.4f} ± {ci_rsf_death_std:.4f}')
+    return
+
+
+@app.cell
+def _():
+    print('Fitting Death — RSF (CV)...')
+    #ci_rsf_death_mean, ci_rsf_death_std = cv_rsf(X_death_aln, y_death)
+
+    #print(f'  RSF  C-index (CV): {ci_rsf_death_mean:.4f} ± {ci_rsf_death_std:.4f}')
     return
 
 
@@ -988,6 +1181,7 @@ def _(X_hep_aln, cv_rsf, y_hep):
 @app.cell
 def _(ci_rsf_hep_mean, ci_rsf_hep_std):
     print(f'  RSF  C-index (CV): {ci_rsf_hep_mean:.4f} ± {ci_rsf_hep_std:.4f}')
+    #0.8572 - 
     return
 
 
@@ -1001,7 +1195,45 @@ def _():
     # Par contre hepatic est à 0.9299 avec l'extended et enlever le truc de slopes absolument pour garder cette performance
 
     # A tester l'impact du slope (avec theilsen directement) sur le risque hepatic
-    # La mort augmente un peu avec ALT/AST mais avec une variance plus élévée
+    # La mort augmente un peu avec ALT/AST mais avec une variance plus élévée et à voir l'impact sur l'hepatic 
+
+
+    # Tester si on
+
+    # 24/04
+
+    #L'option suivante serait de mieux imputer la death et/ou utiliser du semi-supervisé avec la
+    # Creér des features avec le site où j'ai eu l'idée de change_scores
+    # Enlever la slope comme features 
+    # A partir de la partie 3, séparer mon code en plusieurs instance pour que ca marche 
+
+    return
+
+
+@app.cell
+def _(X_death_aln, make_rsf_pipeline, y_death):
+    from select_model import make_rsf_rfecv_pipeline
+
+    model_death = make_rsf_pipeline()
+    model_death.fit(X_death_aln, y_death)
+    return (model_death,)
+
+
+@app.cell
+def _(X_hep_aln, make_rsf_pipeline, y_hep):
+
+    model_hep = make_rsf_pipeline()
+    model_hep.fit(X_hep_aln, y_hep)
+
+
+    return (model_hep,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+ 
+    """)
     return
 
 
@@ -1014,8 +1246,26 @@ def _(mo):
 
 
 @app.cell
-def _():
-    """
+def _(
+    add_exam_within_2y_count,
+    add_patient_summary_metrics,
+    add_visit_metrics,
+    compute_patient_slopes_theilsen,
+    create_change_scores,
+    extract_last_available_values,
+    pd,
+    test_df,
+):
+
+    test_df_tr = pd.get_dummies(extract_last_available_values(add_exam_within_2y_count(add_visit_metrics(add_patient_summary_metrics(compute_patient_slopes_theilsen(create_change_scores(count_non_na_longitudinal(test_df))))))), columns=['gender', "T2DM",'Hypertension', 'Dyslipidaemia','bariatric_surgery'], drop_first=True)
+
+
+    return (test_df_tr,)
+
+
+@app.cell
+def _(build_feature_matrix, keep_death, keep_hep, test_df_tr):
+
 
     X_pred_raw  = build_feature_matrix(test_df_tr)
 
@@ -1029,7 +1279,12 @@ def _():
 
     X_pred_hep  = X_pred_raw[keep_hep]
     X_pred_death= X_pred_raw[keep_death]
-    """
+    return X_pred_death, X_pred_hep
+
+
+@app.cell
+def _():
+    # Verifier le pourcentage de données manquantes dans chacune des colonnes
     return
 
 
@@ -1042,23 +1297,58 @@ def _(mo):
 
 
 @app.cell
+def _(X_pred_death, model_death):
+
+
+    preds_test_death = model_death.predict(X_pred_death)
+    #print(preds_test_death[:5])
+
+    #selected_mask = model_death.named_steps["rfecv"].support_
+    #selected_features = X_death_aln.columns[selected_mask]
+    #print("Nb features retenues:", selected_mask.sum())
+    #print(selected_features.tolist())
+
+    return (preds_test_death,)
+
+
+@app.cell
+def _(X_pred_hep, model_hep):
+
+    preds_test_hep = model_hep.predict(X_pred_hep)
+    #print(preds_test_death[:5])
+
+    #selected_mask_hep = model_hep.named_steps["rfecv"].support_
+    #selected_features_hep = X_hep_aln.columns[selected_mask]
+    #print("Nb features retenues:", selected_mask_hep.sum())
+    #print(selected_features_hep.tolist())
+
+    return (preds_test_hep,)
+
+
+@app.cell
 def _():
     # Use RSF predictions (more robust on tabular survival data with rare events)
-    """
 
-    pred_hep   = rsf_hep.predict(X_pred_hep)
-    pred_death = rsf_death.predict(X_pred_death)
+
+    #preds_hep   = rsf_hep.predict(X_pred_hep)
+    #preds_death = rsf_death.predict(X_pred_death)
+    return
+
+
+@app.cell
+def _(pd, preds_test_death, preds_test_hep, test_df):
+    # Use RSF predictions (more robust on tabular survival data with rare events)
+
 
     submission = pd.DataFrame({
         'trustii_id':         test_df['trustii_id'].values,
-        'risk_hepatic_event': pred_hep,
-        'risk_death':         pred_death,
+        'risk_hepatic_event': preds_test_hep,
+        'risk_death':         preds_test_death,
     })
 
-    submission.to_csv(OUTPUT_PATH, index=False)
-    print(f'Saved {len(submission)} predictions → {OUTPUT_PATH}')
+    submission.to_csv('submission_0205.csv', index=False)
+    print(f'Saved {len(submission)} predictions → submission_0205.csv')
     print(submission.head())
-    """
     return
 
 
@@ -1081,33 +1371,33 @@ def _():
 
     def add_first_last_visits(df, biomarkers, max_visit=22):
         df = df.copy()
-    
+
         for biom in biomarkers:
             biom_cols = [f"{biom}_v{i}" for i in range(1, max_visit+1) if f"{biom}_v{i}" in df.columns]
-        
+
             if not biom_cols:
                 df[f"first_{biom}"] = 0
                 df[f"last_{biom}"] = 0
                 continue
-        
+
             data = df[biom_cols]
             mask = data.notna()
-        
+
             visit_numbers = np.array([int(col.split("_v")[1]) for col in biom_cols])
-        
+
             def get_first(row):
                 if not row.any():
                     return 0
                 return visit_numbers[row.values].min()
-        
+
             def get_last(row):
                 if not row.any():
                     return 0
                 return visit_numbers[row.values].max()
-        
+
             df[f"first_{biom}"] = mask.apply(get_first, axis=1)
             df[f"last_{biom}"] = mask.apply(get_last, axis=1)
-    
+
         return df
     """
     return
@@ -1123,57 +1413,57 @@ def _():
 
     def compute_patient_slopes_theilsen(df, biomarkers, max_visit=22):
         df = df.copy()
-    
+
         def theil_sen_slope(x, y):
             slopes = []
             n = len(x)
-        
+
             for i in range(n):
                 for j in range(i+1, n):
                     if x[j] != x[i]:
                         slopes.append((y[j] - y[i]) / (x[j] - x[i]))
-        
+
             if len(slopes) == 0:
                 return np.nan
-        
+
             return np.median(slopes)
-    
+
         for biom in biomarkers:
             values = []
             ages = []
-        
+
             for v in range(1, max_visit+1):
                 val_col = f"{biom}_v{v}"
                 age_col = f"Age_v{v}"
-            
+
                 if val_col in df.columns and age_col in df.columns:
                     values.append(df[val_col])
                     ages.append(df[age_col])
-        
+
             if len(values) < 2:
                 df[f"slope_ts_{biom}"] = np.nan
                 continue
-        
+
             values = pd.concat(values, axis=1)
             ages = pd.concat(ages, axis=1)
-        
+
             slopes = []
-        
+
             for i in range(len(df)):
                 x = ages.iloc[i].values
                 y = values.iloc[i].values
-            
+
                 mask = ~np.isnan(x) & ~np.isnan(y)
                 x = x[mask]
                 y = y[mask]
-            
+
                 if len(x) < 2:
                     slopes.append(np.nan)
                 else:
                     slopes.append(theil_sen_slope(x, y))
-        
+
             df[f"slope_ts_{biom}"] = slopes
-    
+
         return df
         """
     return
@@ -1187,24 +1477,24 @@ def _():
 
     def add_visit_metrics(df, max_visit=22):
         df = df.copy()
-    
+
         # Toutes les colonnes longitudinales
         long_cols = [col for col in df.columns if "_v" in col]
-    
+
         for v in range(1, max_visit + 1):
             # Colonnes de la visite v
             visit_cols = [col for col in long_cols if col.endswith(f"_v{v}")]
-        
+
             if visit_cols:
                 # Nombre de mesures non NA à cette visite
                 df[f"n_measures_v{v}"] = df[visit_cols].notna().sum(axis=1)
             else:
                 df[f"n_measures_v{v}"] = np.nan
-        
+
             # Différence d'âge
             age_col = f"Age_v{v}"
             prev_age_col = f"Age_v{v-1}"
-        
+
             if v == 1:
                 df[f"age_diff_v{v}"] = np.nan
             else:
@@ -1216,7 +1506,7 @@ def _():
                     )
                 else:
                     df[f"age_diff_v{v}"] = np.nan
-    
+
         return df
         """
     return
@@ -1439,7 +1729,7 @@ def _():
 def _(Surv, np, pd):
 
 
-    def prepare_survival_targets_robust(
+    def prepare_survival_targets_custom(
         df: pd.DataFrame,
         outcome: str = "hepatic",
         baseline_col: str = "Age_v1",
@@ -1448,90 +1738,62 @@ def _(Surv, np, pd):
         drop_nonpositive_times: bool = True,
         return_report: bool = False,
     ):
-        """
-        Build a sksurv-compatible structured array for one survival endpoint.
-
-        Rules:
-          - event missing -> drop row
-          - event == 1 and event time missing -> drop row  (Peut être prendre last_observed_age - Age_v1 ou predire selon les donnes)
-          - event == 0 -> censored at last_observed_age - Age_v1
-          - negative times -> drop row if drop_nonpositive_times=True
-          - zero times -> clamped to min_time
-
-        Parameters
-        ----------
-        df : pd.DataFrame
-            Must contain baseline_col, last_observed_col, and the target columns.
-        outcome : str
-            "hepatic" or "death".
-        return_report : bool
-            If True, also returns a dict with filtering counts.
-
-        Returns
-        -------
-        df_valid : pd.DataFrame
-        y : structured np.ndarray
-        report : dict (optional)
-        """
-
         df = df.copy()
 
         if outcome == "hepatic":
             event_col = "evenements_hepatiques_majeurs"
             time_col = "evenements_hepatiques_age_occur"
             event_name = "Hepatic_event"
+
+            # Event must be known
+            df = df[df[event_col].notna()].copy()
+            is_event = df[event_col].astype(int) == 1
+
+            # If event=1 → time must exist
+            valid = (~is_event) | df[time_col].notna()
+            df = df[valid].copy()
+
         elif outcome == "death":
             event_col = "death"
             time_col = "death_age_occur"
             event_name = "Death"
+
+            # 🔥 NOUVELLE RÈGLE
+            # event NaN → 0 (censuré)
+            df[event_col] = df[event_col].fillna(0)
+
+            is_event = df[event_col].astype(int) == 1
+
+            # Si event=1 → temps obligatoire
+            valid = (~is_event) | df[time_col].notna()
+            df = df[valid].copy()
         else:
-            raise ValueError(f"outcome must be 'hepatic' or 'death', got {outcome!r}")
+            raise ValueError(f"outcome must be 'hepatic' or 'death'")
 
-        required_cols = [event_col, time_col, baseline_col, last_observed_col]
-        missing_required = [c for c in required_cols if c not in df.columns]
-        if missing_required:
-            raise ValueError(f"Missing required columns: {missing_required}")
-
-        n0 = len(df)
-
-        # Keep only rows where the event indicator is known
-        mask_event_known = df[event_col].notna()
-        df = df.loc[mask_event_known].copy()
-        n1 = len(df)
-
-        # Convert to binary event indicator
+        # Recompute after filtering
         is_event = df[event_col].astype(int) == 1
 
-        # For event rows, the event time must be known
-        mask_event_time_known = (~is_event) | df[time_col].notna()
-        df = df.loc[mask_event_time_known].copy()
-        n2 = len(df)
-
-        # Recompute event indicator after filtering
-        is_event = df[event_col].astype(int) == 1
-
-        # Survival time
+        # Compute time
         time_values = np.where(
             is_event,
             df[time_col] - df[baseline_col],
             df[last_observed_col] - df[baseline_col],
         ).astype(float)
 
-        # Remove obviously invalid times
+        # Clean invalid times
         if drop_nonpositive_times:
-            mask_valid_time = time_values > 0
-            df = df.loc[mask_valid_time].copy()
-            time_values = time_values[mask_valid_time]
-        else:
-            # Keep them but clamp after
-            pass
+            mask_valid = time_values > 0
+            df = df.loc[mask_valid].copy()
+            time_values = time_values[mask_valid]
 
-        # If any still negative due to numerical issues, drop them
+        # Remove NaN / inf
         mask_finite = np.isfinite(time_values)
         df = df.loc[mask_finite].copy()
         time_values = time_values[mask_finite]
 
-        # Clamp zeros / tiny values
+    
+
+        # Clamp small values
         time_values = np.maximum(time_values, min_time)
 
         is_event = (df[event_col].astype(int) == 1).to_numpy()
@@ -1545,11 +1807,8 @@ def _(Surv, np, pd):
 
         if return_report:
             report = {
-                "n_initial": n0,
-                "n_after_event_known": n1,
-                "n_after_event_time_known": n2,
                 "n_final": len(df),
-                "dropped_total": n0 - len(df),
+                "event_rate": is_event.mean(),
                 "outcome": outcome,
             }
             return df.reset_index(drop=True), y, report
@@ -1761,7 +2020,7 @@ def _(IterativeImputer, np, pd):
 
         return df
 
-    
+
 
     return
 
@@ -1859,6 +2118,117 @@ def _(Surv, np, pd):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
+    ## 2.0 Création de la colonne ALT/ AST
+    """)
+    return
+
+
+@app.cell
+def _(np):
+
+    def create_alt_ast_ratio(df, max_visit=21):
+        df = df.copy()
+
+        for v in range(1, max_visit + 1):
+            alt_col = f'alt_v{v}'
+            ast_col = f'ast_v{v}'
+            new_col = f'alt_ast_v{v}'
+
+            if alt_col in df.columns and ast_col in df.columns:
+                df[new_col] = np.where(
+                    df[alt_col].notna() & df[ast_col].notna(),
+                    df[alt_col] / df[ast_col],
+                    np.nan
+                )
+            else:
+                # Si une des colonnes n'existe pas → colonne remplie de NA
+                df[new_col] = np.nan
+
+        # Drop toutes les colonnes ALT et AST
+        cols_to_drop = [col for col in df.columns if col.startswith('alt_v') or col.startswith('ast_')]
+        #df = df.drop(columns=cols_to_drop)
+
+        return df
+
+    return (create_alt_ast_ratio,)
+
+
+@app.cell
+def _(create_alt_ast_ratio, df):
+    df1 = create_alt_ast_ratio(df, max_visit=21)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # Création d'une variable metabolic_syndrome
+    """)
+    return
+
+
+@app.cell
+def _(np):
+
+    def create_metabolic_syndrome(df, visits=range(1, 23)):
+        df = df.copy()
+        # 1. Créer les scores par visite
+        for v in visits:
+            bmi_col = f"BMI_v{v}"
+            gluc_col = f"gluc_fast_v{v}"
+            trig_col = f"triglyc_v{v}"
+
+            required_cols = [bmi_col, gluc_col, trig_col,
+                             "Hypertension", "Dyslipidaemia", "T2DM"]
+
+            if any(c not in df.columns for c in required_cols):
+                continue
+
+            crit_bmi = df[bmi_col].ge(30)
+            crit_gluc = df[gluc_col].ge(5.6)
+            crit_trig = df[trig_col].ge(1.5)
+            crit_htn = df["Hypertension"].ge(1)
+            crit_dyslip = df["Dyslipidaemia"].ge(1)
+            crit_t2dm = df["T2DM"].ge(1)  # ⚠️ corrigé
+
+            n_criteria = (
+                crit_bmi.fillna(False).astype(int) +
+                crit_gluc.fillna(False).astype(int) +
+                crit_trig.fillna(False).astype(int) +
+                crit_htn.fillna(False).astype(int) +
+                crit_dyslip.fillna(False).astype(int) +
+                crit_t2dm.fillna(False).astype(int))
+
+            df[f"metabolic_syndrome_v{v}"] = np.select(
+                [n_criteria >= 5, n_criteria >= 4, n_criteria >= 3],
+                [3, 2, 1],
+                default=0)
+
+        # 2. MAX (une seule fois)
+        ms_cols = [col for col in df.columns if col.startswith("metabolic_syndrome_v")]
+        df["metabolic_syndrome_max"] = df[ms_cols].max(axis=1)
+
+        # 3. CHANGE SCORE (entre visites consécutives)
+        for v in range(1, 7):
+            col = f"metabolic_syndrome_v{v}"
+            prev_col = f"metabolic_syndrome_v1"
+            out_col = f"ms_change_v{v}"
+
+            if v == 1:
+                df[out_col] = np.nan
+            elif col in df.columns and prev_col in df.columns:
+                df[out_col] = df[col] - df[prev_col]
+            else:
+                df[out_col] = np.nan
+
+        return df
+
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
  
     """)
     return
@@ -1878,32 +2248,32 @@ def _():
     """
     def extract_high_fibrotest(df, threshold=0.6):
         df = df.copy()
-    
+
         # Colonnes fibrotest
         fibro_cols = [col for col in df.columns if col.startswith("fibrotest_BM_2_v")]
-    
-    
+
+
         # Condition : au moins une valeur > threshold
         mask = (df[fibro_cols] > threshold).any(axis=1)
-    
+
         # Sous-table
         high_fibrotest_df = df[mask]
-    
+
         return high_fibrotest_df
 
     def extract_high_stiffness(df, threshold=0.6):
         df = df.copy()
-    
+
         # Colonnes fibrotest
         fibro_cols = [col for col in df.columns if col.startswith("fibs_stiffness_med_BM_1_v")]
-    
-    
+
+
         # Condition : au moins une valeur > threshold
         mask = (df[fibro_cols] > threshold).any(axis=1)
-    
+
         # Sous-table
         high_stiffness_df = df[mask]
-    
+
         return high_stiffness_df
 
 
@@ -1918,25 +2288,25 @@ def _():
 
     def plot_death_vs_last_age(high_fibrotest_df):
         df = high_fibrotest_df.copy()
-    
+
         # 1. Colonnes d'âge
         age_cols = [col for col in df.columns if col.startswith("Age_v")]
-    
+
         # Trier correctement (v1, v2, ..., v22)
         age_cols = sorted(age_cols, key=lambda x: int(x.split("v")[1]))
-    
+
         # 2. Dernier âge non NA par patient
         df["last_age"] = df[age_cols].apply(
             lambda row: row.dropna().iloc[-1] if row.notna().any() else np.nan,
             axis=1
         )
-    
+
         # 3. Filtrer patients avec death_age_occur non manquant
         df = df[df["death_age_occur"].notna()]
-    
+
         # 4. Calcul différence
         df["death_minus_last_age"] = df["death_age_occur"] - df["last_age"]
-    
+
         # 5. Histogramme
         plt.figure(figsize=(8,5))
         plt.hist(df["death_minus_last_age"].dropna(), bins=30)
@@ -1945,7 +2315,7 @@ def _():
         plt.ylabel("Number of patients")
         plt.title("Distribution of time between last visit and death")
         plt.show()
-    
+
         return df
 
     result_df_stiffness = plot_death_vs_last_age(high_stiffness_df)
