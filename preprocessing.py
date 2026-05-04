@@ -417,7 +417,7 @@ def _(BIOMARKERS, np):
 
         return df
 
-    return
+    return (add_first_last_visits,)
 
 
 @app.cell
@@ -567,6 +567,194 @@ def _(np):
     return (add_exam_within_2y_count,)
 
 
+@app.cell
+def create_metabolic_syndrome(np):
+    def create_metabolic_syndrome(df, visits=range(1, 23)):
+        df = df.copy()
+        for v in visits:
+            bmi_col = f"BMI_v{v}"
+            gluc_col = f"gluc_fast_v{v}"
+            trig_col = f"triglyc_v{v}"
+            required_cols = [bmi_col, gluc_col, trig_col,
+                             "Hypertension", "Dyslipidaemia", "T2DM"]
+            if any(c not in df.columns for c in required_cols):
+                continue
+            crit_bmi = df[bmi_col].ge(30)
+            crit_gluc = df[gluc_col].ge(5.6)
+            crit_trig = df[trig_col].ge(1.5)
+            crit_htn = df["Hypertension"].ge(1)
+            crit_dyslip = df["Dyslipidaemia"].ge(1)
+            crit_t2dm = df["T2DM"].ge(1)  # ⚠️ corrigé
+            n_criteria = (
+                crit_bmi.fillna(False).astype(int) +
+                crit_gluc.fillna(False).astype(int) +
+                crit_trig.fillna(False).astype(int) +
+                crit_htn.fillna(False).astype(int) +
+                crit_dyslip.fillna(False).astype(int) +
+                crit_t2dm.fillna(False).astype(int))
+            df[f"metabolic_syndrome_v{v}"] = np.select(
+                [n_criteria >= 5, n_criteria >= 4, n_criteria >= 3],
+                [3, 2, 1],
+                default=0)
+        # 2. MAX (une seule fois)
+        ms_cols = [col for col in df.columns if col.startswith("metabolic_syndrome_v")]
+        df["metabolic_syndrome_max"] = df[ms_cols].max(axis=1)
+        df.drop(columns = ms_cols)
+
+        return df
+
+    return
+
+
+@app.cell
+def _(np):
+
+    def create_alt_ast_ratio(df, max_visit=21):
+        df = df.copy()
+
+        for v in range(1, max_visit + 1):
+            alt_col = f'alt_v{v}'
+            ast_col = f'ast_v{v}'
+            new_col = f'alt_ast_v{v}'
+
+            if alt_col in df.columns and ast_col in df.columns:
+                df[new_col] = np.where(
+                    df[alt_col].notna() & df[ast_col].notna(),
+                    df[alt_col] / df[ast_col],
+                    np.nan
+                )
+            else:
+                # Si une des colonnes n'existe pas → colonne remplie de NA
+                df[new_col] = np.nan
+
+        # Drop toutes les colonnes ALT et AST
+        cols_to_drop = [col for col in df.columns if col.startswith('alt_v') or col.startswith('ast_')]
+        #df = df.drop(columns=cols_to_drop)
+
+        return df
+
+    return (create_alt_ast_ratio,)
+
+
+@app.cell
+def _(np):
+    def create_ast_plt_ratio(df, max_visit=21):
+        df = df.copy()
+
+        for v in range(1, max_visit + 1):
+            ast_col = f'ast_v{v}'
+            plt_col = f'plt_v{v}'
+            new_col = f'ast_plt_v{v}'
+
+            if ast_col in df.columns and plt_col in df.columns:
+                df[new_col] = np.where(
+                    df[ast_col].notna() & df[plt_col].notna(),
+                    df[ast_col] / (df[plt_col]+1e-6),
+                    np.nan
+                )
+            else:
+                # Si une des colonnes n'existe pas → colonne remplie de NA
+                df[new_col] = np.nan
+
+        # Drop AST and PLT columns
+        cols_to_drop = [col for col in df.columns if col.startswith('ast_v') or col.startswith('plt_v') or col.startswith('alt_v')]
+        #df = df.drop(columns=cols_to_drop)
+
+        return df
+
+    return
+
+
+@app.cell
+def _(np):
+    def create_fibro_stiff_multi(df, max_visit=21):
+        df = df.copy()
+
+        for v in range(1, max_visit + 1):
+            fibrotest_col = f'fibrotest_BM_2_v{v}'
+            stiffness_col = f'fibs_stiffness_med_BM_1_v{v}'
+            new_col = f'fibrotest_fibs_v{v}'
+
+            if fibrotest_col in df.columns and stiffness_col in df.columns:
+                df[new_col] = np.where(
+                    df[fibrotest_col].notna() & df[stiffness_col].notna(),
+                    df[fibrotest_col] * df[stiffness_col],
+                    np.nan
+                )
+            else:
+                #
+                df[new_col] = np.nan
+
+        # Drop
+        cols_to_drop = [col for col in df.columns if col.startswith('fibrotest_BM_2_v') or col.startswith('fibs_stiffness_med_BM_1_v')]
+        #df = df.drop(columns=cols_to_drop)
+
+        return df
+
+    return
+
+
+@app.cell
+def _(BIOMARKERS):
+    def add_missingness_features(df, biomarkers=BIOMARKERS, max_visit=22):
+        """
+        Ajoute des features de missingness informative pour les données longitudinales.
+        """
+        import numpy as np
+        import pandas as pd
+
+        df = df.copy()
+
+        # 1) Missingness globale par patient
+        long_cols = [c for c in df.columns if "_v" in c]
+        if long_cols:
+            df["n_missing_longitudinal"] = df[long_cols].isna().sum(axis=1)
+            df["prop_missing_longitudinal"] = df[long_cols].isna().mean(axis=1)
+            df["n_observed_longitudinal"] = df[long_cols].notna().sum(axis=1)
+
+        # 2) Missingness par visite
+        for v in range(1, max_visit + 1):
+            visit_cols = [c for c in df.columns if c.endswith(f"_v{v}")]
+            if visit_cols:
+                df[f"missing_count_v{v}"] = df[visit_cols].isna().sum(axis=1)
+                df[f"observed_count_v{v}"] = df[visit_cols].notna().sum(axis=1)
+                df[f"missing_prop_v{v}"] = df[visit_cols].isna().mean(axis=1)
+            else:
+                df[f"missing_count_v{v}"] = np.nan
+                df[f"observed_count_v{v}"] = np.nan
+                df[f"missing_prop_v{v}"] = np.nan
+
+        # 3) Missingness par biomarqueur
+        for biom in biomarkers:
+            biom_cols = [f"{biom}_v{i}" for i in range(1, max_visit + 1) if f"{biom}_v{i}" in df.columns]
+
+            if not biom_cols:
+                df[f"n_obs_{biom}"] = 0
+                df[f"prop_obs_{biom}"] = 0.0
+                df[f"ever_measured_{biom}"] = 0
+                df[f"first_missing_{biom}"] = 1
+                continue
+
+            obs_mask = df[biom_cols].notna()
+
+            df[f"n_obs_{biom}"] = obs_mask.sum(axis=1)
+            df[f"prop_obs_{biom}"] = obs_mask.mean(axis=1)
+            df[f"ever_measured_{biom}"] = (obs_mask.sum(axis=1) > 0).astype(int)
+
+            # 1 si la première visite est manquante, 0 sinon
+            first_col = biom_cols[0]
+            df[f"first_missing_{biom}"] = df[first_col].isna().astype(int)
+
+        # 4) Nombre de biomarqueurs jamais mesurés
+        never_measured_cols = [f"ever_measured_{biom}" for biom in biomarkers if f"ever_measured_{biom}" in df.columns]
+        if never_measured_cols:
+            df["n_biomarkers_never_measured"] = (df[never_measured_cols] == 0).sum(axis=1)
+
+        return df
+
+    return (add_missingness_features,)
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -585,10 +773,10 @@ def _():
 @app.cell
 def _(np, re):
 
-    def extract_last_available_values(df):
+    def extract_last_observed_age(df):
         df = df.copy()
 
-        # -----------------------------
+    # -----------------------------
         # 1. Colonnes âge
         # -----------------------------
         age_cols = sorted(
@@ -613,6 +801,42 @@ def _(np, re):
             np.nan
         )
 
+        return df
+
+    return (extract_last_observed_age,)
+
+
+@app.cell
+def _(np, re):
+
+    def extract_last_available_values(df):
+        df = df.copy()
+
+        # -----------------------------
+        # 1. Colonnes âge
+        # -----------------------------
+        age_cols = sorted(
+            [c for c in df.columns if re.match(r"Age_v\d+", c)],
+            key=lambda x: int(re.findall(r"\d+", x)[0])
+        )
+
+        age_matrix = df[age_cols].to_numpy()
+        mask_age = ~np.isnan(age_matrix)
+
+        # num_visits
+        #df["num_visits"] = mask_age.sum(axis=1)
+
+        # last observed age (indépendant maintenant)
+        rev_idx_age = np.argmax(mask_age[:, ::-1], axis=1)
+        last_idx_age = age_matrix.shape[1] - 1 - rev_idx_age
+        last_idx_age[df["num_visits"] == 0] = -1
+
+        #df["last_observed_age"] = np.where(
+            #last_idx_age >= 0,
+            #age_matrix[np.arange(len(df)), last_idx_age],
+            #np.nan
+        #)
+
         # -----------------------------
         # 2. Biomarqueurs
         # -----------------------------
@@ -628,7 +852,7 @@ def _(np, re):
         visit_cols_to_drop = []
 
 
-        N_LAST = 10  # 👈 nombre de valeurs à garder
+        N_LAST = 5 # 👈 nombre de valeurs à garder
 
         for biom in biomarkers:
             biom_cols = sorted(
@@ -701,31 +925,39 @@ def _(df):
 
 @app.cell
 def _(
-    add_exam_within_2y_count,
+    add_first_last_visits,
+    add_missingness_features,
     add_patient_summary_metrics,
     add_visit_metrics,
-    create_change_scores,
+    create_alt_ast_ratio,
     df,
     extract_last_available_values,
+    extract_last_observed_age,
     pd,
 ):
 
-    train_df_hep = pd.get_dummies(extract_last_available_values(add_exam_within_2y_count(add_visit_metrics(add_patient_summary_metrics(create_change_scores(count_non_na_longitudinal(df)))))), columns=['gender', "T2DM",'Hypertension', 'Dyslipidaemia','bariatric_surgery'], drop_first=True)
+    train_df_hep = pd.get_dummies(extract_last_available_values(extract_last_observed_age(add_missingness_features(create_alt_ast_ratio(add_visit_metrics(add_first_last_visits(add_patient_summary_metrics(df))))))), columns=['gender', "T2DM",'Hypertension', 'Dyslipidaemia','bariatric_surgery'], drop_first=True)
+
+    #Rajouter extract_last_available_values
     return (train_df_hep,)
 
 
 @app.cell
 def _(
     add_exam_within_2y_count,
+    add_patient_summary_metrics,
     add_visit_metrics,
     compute_patient_slopes_theilsen,
     create_change_scores,
     df,
     extract_last_available_values,
+    extract_last_observed_age,
     pd,
 ):
 
-    train_df_death = pd.get_dummies(extract_last_available_values(add_exam_within_2y_count(add_visit_metrics(compute_patient_slopes_theilsen(create_change_scores(count_non_na_longitudinal(df)))))), columns=['gender', "T2DM",'Hypertension', 'Dyslipidaemia','bariatric_surgery'], drop_first=True)
+    train_df_death = pd.get_dummies(extract_last_available_values(extract_last_observed_age(add_exam_within_2y_count(add_visit_metrics(add_patient_summary_metrics(compute_patient_slopes_theilsen(create_change_scores(count_non_na_longitudinal(df)))))))), columns=['gender', "T2DM",'Hypertension', 'Dyslipidaemia','bariatric_surgery'], drop_first=True)
+
+    # J'ai enlevé le add_exam_within_2y_count
     return (train_df_death,)
 
 
@@ -829,10 +1061,10 @@ def prepare_survival_targets_robust(Surv, np, pd):
             & df[baseline_col].notna()
             & (df[last_observed_col] - df[baseline_col] < 0)
         )
-    
+
         n_negative_followup = mask_negative_followup.sum()
 
-    
+
 
 
         if outcome == "hepatic":
@@ -985,7 +1217,7 @@ def prepare_survival_targets_robust(Surv, np, pd):
                 "n_negative_followup_raw": int(n_negative_followup),
 
                 "n_negative_censor_time_raw": int(mask_neg_censor.sum()),
-            
+
                 "n_negative_event_time_raw": int(mask_neg_event_time.sum()),
 
                 "outcome": outcome,
@@ -1006,7 +1238,7 @@ def _(prepare_survival_targets_robust, train_df_death, train_df_hep):
     # --- Sanity check ---
     df_hep,   y_hep  =prepare_survival_targets_robust(train_df_hep, outcome='hepatic')
     df_death, y_death = prepare_survival_targets_robust(train_df_death, outcome='death')
-    return df_death, df_hep, y_death, y_hep
+    return df_death, df_hep, y_hep
 
 
 @app.cell(hide_code=True)
@@ -1073,7 +1305,7 @@ def _(ID_COLS, MAX_MISSING_RATE, TARGET_COLS, df_death, df_hep):
     print(f'Death   features after missing filter : {len(keep_death)}  '
           f'(EPV = {int((df_death["death"]==1).sum())}/{len(keep_death)} = '
           f'{(df_death["death"]==1).sum()/len(keep_death):.2f})')
-    return X_death_aln, X_hep_aln, build_feature_matrix, keep_death, keep_hep
+    return X_hep_aln, build_feature_matrix, keep_death, keep_hep
 
 
 @app.cell(hide_code=True)
@@ -1150,7 +1382,7 @@ def _(
         return np.mean(scores), np.std(scores)
 
 
-    return cv_rsf, make_rsf_pipeline
+    return (cv_rsf,)
 
 
 @app.cell
@@ -1170,6 +1402,12 @@ def _():
 
 
 @app.cell
+def _():
+    #print(f'  RSF  C-index (CV): {ci_rsf_death_mean:.4f} ± {ci_rsf_death_std:.4f}')
+    return
+
+
+@app.cell
 def _(X_hep_aln, cv_rsf, y_hep):
     print('Fitting Hepatic — RSF (CV)...')
     ci_rsf_hep_mean, ci_rsf_hep_std = cv_rsf(X_hep_aln, y_hep)
@@ -1181,7 +1419,12 @@ def _(X_hep_aln, cv_rsf, y_hep):
 @app.cell
 def _(ci_rsf_hep_mean, ci_rsf_hep_std):
     print(f'  RSF  C-index (CV): {ci_rsf_hep_mean:.4f} ± {ci_rsf_hep_std:.4f}')
-    #0.8572 - 
+    #0.8572 - 0.8619 - 0.8663 - 0.8709 - 0.8805 pour pd.get_dummies(extract_last_observed_age(create_alt_ast_ratio(add_visit_metrics(add_first_last_visits(add_patient_summary_metrics(df))))), columns=['gender', "T2DM",'Hypertension', 'Dyslipidaemia','bariatric_surgery'], drop_first=True)
+
+    # ---> 
+
+    #--> puis faire un feature importance
+    # Et se faire la réflexion sur ce que je fais si il y a valeurs manquantes --> imputer signifie que la valeur a été faite ce qui n'est pas le cas donc rajouter une variable is_measured pour chaque variable
     return
 
 
@@ -1206,27 +1449,24 @@ def _():
     # Creér des features avec le site où j'ai eu l'idée de change_scores
     # Enlever la slope comme features 
     # A partir de la partie 3, séparer mon code en plusieurs instance pour que ca marche 
-
     return
 
 
 @app.cell
-def _(X_death_aln, make_rsf_pipeline, y_death):
-    from select_model import make_rsf_rfecv_pipeline
+def _():
+    from select_model import make_rsf_rfecv_pipeline, make_gbsa_rfecv_pipeline
 
-    model_death = make_rsf_pipeline()
-    model_death.fit(X_death_aln, y_death)
-    return (model_death,)
+    #model_death = make_gbsa_rfecv_pipeline()
+    #model_death.fit(X_death_aln, y_death)
+    return
 
 
 @app.cell
-def _(X_hep_aln, make_rsf_pipeline, y_hep):
+def _():
 
-    model_hep = make_rsf_pipeline()
-    model_hep.fit(X_hep_aln, y_hep)
-
-
-    return (model_hep,)
+    #model_hep = make_gbsa_rfecv_pipeline()
+    #model_hep.fit(X_hep_aln, y_hep)
+    return
 
 
 @app.cell(hide_code=True)
@@ -1246,21 +1486,12 @@ def _(mo):
 
 
 @app.cell
-def _(
-    add_exam_within_2y_count,
-    add_patient_summary_metrics,
-    add_visit_metrics,
-    compute_patient_slopes_theilsen,
-    create_change_scores,
-    extract_last_available_values,
-    pd,
-    test_df,
-):
-
+def _():
+    """
     test_df_tr = pd.get_dummies(extract_last_available_values(add_exam_within_2y_count(add_visit_metrics(add_patient_summary_metrics(compute_patient_slopes_theilsen(create_change_scores(count_non_na_longitudinal(test_df))))))), columns=['gender', "T2DM",'Hypertension', 'Dyslipidaemia','bariatric_surgery'], drop_first=True)
 
-
-    return (test_df_tr,)
+    """
+    return
 
 
 @app.cell
@@ -1308,46 +1539,53 @@ def _(X_pred_death, model_death):
     #print("Nb features retenues:", selected_mask.sum())
     #print(selected_features.tolist())
 
+    #X_pred_death_select = X_pred_death[selected_features]
     return (preds_test_death,)
 
 
 @app.cell
-def _(X_pred_hep, model_hep):
-
-    preds_test_hep = model_hep.predict(X_pred_hep)
-    #print(preds_test_death[:5])
-
-    #selected_mask_hep = model_hep.named_steps["rfecv"].support_
-    #selected_features_hep = X_hep_aln.columns[selected_mask]
-    #print("Nb features retenues:", selected_mask_hep.sum())
-    #print(selected_features_hep.tolist())
-
-    return (preds_test_hep,)
-
-
-@app.cell
 def _():
-    # Use RSF predictions (more robust on tabular survival data with rare events)
-
-
-    #preds_hep   = rsf_hep.predict(X_pred_hep)
-    #preds_death = rsf_death.predict(X_pred_death)
     return
 
 
 @app.cell
-def _(pd, preds_test_death, preds_test_hep, test_df):
+def _(X_pred_hep, model_hep, preds_test_death):
+
+    preds_test_hep = model_hep.predict(X_pred_hep)
+    print(preds_test_death[:5])
+
+    #selected_mask_hep = model_hep.named_steps["rfecv"].support_
+    #selected_features_hep = X_hep_aln.columns[selected_mask_hep]
+    #print("Nb features retenues:", selected_mask_hep.sum())
+    #print(selected_features_hep.tolist())
+
+    #X_pred_hep_select = X_pred_hep[selected_features_hep]
+    return
+
+
+@app.cell
+def _(X_pred_death, X_pred_hep, model_death, model_hep):
+    # Use RSF predictions (more robust on tabular survival data with rare events)
+
+
+    preds_hep   = model_hep.predict(X_pred_hep)
+    preds_death = model_death.predict(X_pred_death)
+    return preds_death, preds_hep
+
+
+@app.cell
+def _(pd, preds_death, preds_hep, test_df):
     # Use RSF predictions (more robust on tabular survival data with rare events)
 
 
     submission = pd.DataFrame({
         'trustii_id':         test_df['trustii_id'].values,
-        'risk_hepatic_event': preds_test_hep,
-        'risk_death':         preds_test_death,
+        'risk_hepatic_event': preds_hep,
+        'risk_death':         preds_death,
     })
 
-    submission.to_csv('submission_0205.csv', index=False)
-    print(f'Saved {len(submission)} predictions → submission_0205.csv')
+    submission.to_csv('submission_0205_v2.csv', index=False)
+    print(f'Saved {len(submission)} predictions → submission_0205_v2.csv')
     print(submission.head())
     return
 
@@ -1791,7 +2029,7 @@ def _(Surv, np, pd):
         df = df.loc[mask_finite].copy()
         time_values = time_values[mask_finite]
 
-    
+
 
         # Clamp small values
         time_values = np.maximum(time_values, min_time)
@@ -2123,106 +2361,11 @@ def _(mo):
     return
 
 
-@app.cell
-def _(np):
-
-    def create_alt_ast_ratio(df, max_visit=21):
-        df = df.copy()
-
-        for v in range(1, max_visit + 1):
-            alt_col = f'alt_v{v}'
-            ast_col = f'ast_v{v}'
-            new_col = f'alt_ast_v{v}'
-
-            if alt_col in df.columns and ast_col in df.columns:
-                df[new_col] = np.where(
-                    df[alt_col].notna() & df[ast_col].notna(),
-                    df[alt_col] / df[ast_col],
-                    np.nan
-                )
-            else:
-                # Si une des colonnes n'existe pas → colonne remplie de NA
-                df[new_col] = np.nan
-
-        # Drop toutes les colonnes ALT et AST
-        cols_to_drop = [col for col in df.columns if col.startswith('alt_v') or col.startswith('ast_')]
-        #df = df.drop(columns=cols_to_drop)
-
-        return df
-
-    return (create_alt_ast_ratio,)
-
-
-@app.cell
-def _(create_alt_ast_ratio, df):
-    df1 = create_alt_ast_ratio(df, max_visit=21)
-    return
-
-
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     # Création d'une variable metabolic_syndrome
     """)
-    return
-
-
-@app.cell
-def _(np):
-
-    def create_metabolic_syndrome(df, visits=range(1, 23)):
-        df = df.copy()
-        # 1. Créer les scores par visite
-        for v in visits:
-            bmi_col = f"BMI_v{v}"
-            gluc_col = f"gluc_fast_v{v}"
-            trig_col = f"triglyc_v{v}"
-
-            required_cols = [bmi_col, gluc_col, trig_col,
-                             "Hypertension", "Dyslipidaemia", "T2DM"]
-
-            if any(c not in df.columns for c in required_cols):
-                continue
-
-            crit_bmi = df[bmi_col].ge(30)
-            crit_gluc = df[gluc_col].ge(5.6)
-            crit_trig = df[trig_col].ge(1.5)
-            crit_htn = df["Hypertension"].ge(1)
-            crit_dyslip = df["Dyslipidaemia"].ge(1)
-            crit_t2dm = df["T2DM"].ge(1)  # ⚠️ corrigé
-
-            n_criteria = (
-                crit_bmi.fillna(False).astype(int) +
-                crit_gluc.fillna(False).astype(int) +
-                crit_trig.fillna(False).astype(int) +
-                crit_htn.fillna(False).astype(int) +
-                crit_dyslip.fillna(False).astype(int) +
-                crit_t2dm.fillna(False).astype(int))
-
-            df[f"metabolic_syndrome_v{v}"] = np.select(
-                [n_criteria >= 5, n_criteria >= 4, n_criteria >= 3],
-                [3, 2, 1],
-                default=0)
-
-        # 2. MAX (une seule fois)
-        ms_cols = [col for col in df.columns if col.startswith("metabolic_syndrome_v")]
-        df["metabolic_syndrome_max"] = df[ms_cols].max(axis=1)
-
-        # 3. CHANGE SCORE (entre visites consécutives)
-        for v in range(1, 7):
-            col = f"metabolic_syndrome_v{v}"
-            prev_col = f"metabolic_syndrome_v1"
-            out_col = f"ms_change_v{v}"
-
-            if v == 1:
-                df[out_col] = np.nan
-            elif col in df.columns and prev_col in df.columns:
-                df[out_col] = df[col] - df[prev_col]
-            else:
-                df[out_col] = np.nan
-
-        return df
-
     return
 
 
@@ -2320,6 +2463,17 @@ def _():
 
     result_df_stiffness = plot_death_vs_last_age(high_stiffness_df)
     result_df_fibroscan = plot_death_vs_last_age(high_fibrotest_df)
+
+    """
+    return
+
+
+@app.cell
+def _():
+    """
+    L'objectif est d'optimiser le C-index du Hepatic risk et death risk. Pour le risk hepatic, je remarque l'impact de add_patient_summary_metrics. Tu pourrais m'expliquer ce qu'elle fait et m'expliquer pourquoi elle a un impact.
+
+    Dans la même veine, que pourrais-je ajouter ?
 
     """
     return
