@@ -32,7 +32,7 @@ def _():
     from sklearn.feature_selection import RFECV
     from sklearn.inspection import permutation_importance
 
-    return IterativeImputer, KFold, Pipeline
+    return IterativeImputer, KFold, Pipeline, SimpleImputer
 
 
 @app.cell
@@ -402,13 +402,13 @@ def _(BIOMARKERS, np):
 
             # Première visite
             first_visit = mask.apply(
-                lambda row: visit_numbers[row.values].min() if row.any() else np.nan,
+                lambda row: visit_numbers[row.values].min() if row.any() else 0,
                 axis=1
             )
 
             # Dernière visite
             last_visit = mask.apply(
-                lambda row: visit_numbers[row.values].max() if row.any() else np.nan,
+                lambda row: visit_numbers[row.values].max() if row.any() else 0,
                 axis=1
             )
 
@@ -433,11 +433,11 @@ def _(np):
             # Colonnes de la visite v
             visit_cols = [col for col in long_cols if col.endswith(f"_v{v}")]
 
-            if visit_cols:
+            #if visit_cols:
                 # Nombre de mesures non NA à cette visite
-                df[f"n_measures_v{v}"] = df[visit_cols].notna().sum(axis=1)
-            else:
-                df[f"n_measures_v{v}"] = np.nan
+                #df[f"n_measures_v{v}"] = df[visit_cols].notna().sum(axis=1)
+            #else:
+                #df[f"n_measures_v{v}"] = np.nan
 
             # Différence d'âge
             age_col = f"Age_v{v}"
@@ -480,9 +480,10 @@ def _(BIOMARKERS, np, pd):
         else:
             df["mean_age_diff"] = np.nan
 
-        df["min_age"] = df[age_cols].min(axis=1, skipna=True)
-        df["max_age"] = df[age_cols].max(axis=1, skipna=True)
-        df["age_range"] = df["max_age"] - df["min_age"]
+        #df["min_age"] = df[age_cols].min(axis=1, skipna=True)
+        #df["max_age"] = df[age_cols].max(axis=1, skipna=True)
+        #df["age_range"] = df["max_age"] - df["min_age"]
+        df["age_range"] = df[age_cols].max(axis=1, skipna=True) - df[age_cols].min(axis=1, skipna=True)
 
         # =========================
         # 2. COMPLETUDE (global)
@@ -510,9 +511,10 @@ def _(BIOMARKERS, np, pd):
                 continue
 
             # --- min / max / range ---
-            df[f"min_{biom}"] = df[biom_cols].min(axis=1, skipna=True)
-            df[f"max_{biom}"] = df[biom_cols].max(axis=1, skipna=True)
-            df[f"{biom}_range"] = df[f"max_{biom}"] - df[f"min_{biom}"]
+            df[f"min_{biom}"] = df[biom_cols].min(axis=1, skipna=True)#.fillna(0)
+            df[f"max_{biom}"] = df[biom_cols].max(axis=1, skipna=True)#.fillna(0)
+            df[f"{biom}_range"] = (df[f"max_{biom}"] - df[f"min_{biom}"]).fillna(0)
+            #df[f"{biom}_range"] = df[biom_cols].max(axis=1, skipna=True) - df[biom_cols].min(axis=1, skipna=True)
 
             # --- différences entre visites ---
             diffs = []
@@ -584,7 +586,7 @@ def create_metabolic_syndrome(np):
             crit_trig = df[trig_col].ge(1.5)
             crit_htn = df["Hypertension"].ge(1)
             crit_dyslip = df["Dyslipidaemia"].ge(1)
-            crit_t2dm = df["T2DM"].ge(1)  # ⚠️ corrigé
+            crit_t2dm = df["T2DM"].ge(1)  # 
             n_criteria = (
                 crit_bmi.fillna(False).astype(int) +
                 crit_gluc.fillna(False).astype(int) +
@@ -599,11 +601,73 @@ def create_metabolic_syndrome(np):
         # 2. MAX (une seule fois)
         ms_cols = [col for col in df.columns if col.startswith("metabolic_syndrome_v")]
         df["metabolic_syndrome_max"] = df[ms_cols].max(axis=1)
-        df.drop(columns = ms_cols)
+        df = df.drop(columns = ms_cols)
 
         return df
 
     return
+
+
+@app.function
+def create_metabolic_syndrome_v2(df, visits=range(1, 23)):
+    """
+    Crée un proxy de syndrome métabolique par visite + résumé global.
+    """
+
+    df = df.copy()
+    ms_cols = []
+
+    for v in visits:
+        bmi_col  = f"BMI_v{v}"
+        gluc_col = f"gluc_fast_v{v}"
+        trig_col = f"triglyc_v{v}"
+
+        if not all(c in df.columns for c in [bmi_col, gluc_col, trig_col]):
+            continue
+
+        # Critères dynamiques
+        crit_bmi  = df[bmi_col] >= 30
+        crit_gluc = df[gluc_col] >= 5.6
+        crit_trig = df[trig_col] >= 1.5
+
+        # Critères statiques (comptés une seule fois implicitement)
+        crit_htn     = df["Hypertension"] == 1 if "Hypertension" in df else 0
+        crit_t2dm    = df["T2DM"] == 1 if "T2DM" in df else 0
+        crit_dyslip  = df["Dyslipidaemia"] == 1 if "Dyslipidaemia" in df else 0
+
+        # ⚠️ Ne PAS remplir les NaN → garder info
+        n_criteria = (
+            crit_bmi.astype(float) +
+            crit_gluc.astype(float) +
+            crit_trig.astype(float) +
+            crit_htn.astype(float) +
+            crit_t2dm.astype(float) +
+            crit_dyslip.astype(float)
+        )
+
+        col_name = f"metabolic_syndrome_v{v}"
+        df[col_name] = n_criteria
+        ms_cols.append(col_name)
+
+    # =========================
+    # Résumés globaux (très importants)
+    # =========================
+
+    if ms_cols:
+        df["metabolic_syndrome_max"] = df[ms_cols].max(axis=1)
+        df["metabolic_syndrome_mean"] = df[ms_cols].mean(axis=1)
+        #df["metabolic_syndrome_last"] = df[ms_cols].ffill(axis=1).iloc[:, -1]
+
+        # Nombre de visites avec syndrome (>=3 critères)
+        #df["metabolic_syndrome_count"] = (df[ms_cols] >= 3).sum(axis=1)
+
+        # Proportion de visites avec syndrome
+        #df["metabolic_syndrome_prop"] = (df[ms_cols] >= 3).mean(axis=1)
+
+        # Optionnel : supprimer les colonnes par visite
+        df = df.drop(columns=ms_cols)
+
+    return df
 
 
 @app.cell
@@ -629,7 +693,7 @@ def _(np):
 
         # Drop toutes les colonnes ALT et AST
         cols_to_drop = [col for col in df.columns if col.startswith('alt_v') or col.startswith('ast_')]
-        #df = df.drop(columns=cols_to_drop)
+        df = df.drop(columns=cols_to_drop)
 
         return df
 
@@ -752,7 +816,324 @@ def _(BIOMARKERS):
 
         return df
 
-    return (add_missingness_features,)
+    return
+
+
+@app.function
+def create_cirrhosis_proxy(df, visits=range(1, 23)):
+    """
+    Proxy de risque de cirrhose basé sur plusieurs biomarqueurs.
+    """
+
+    import numpy as np
+    df = df.copy()
+
+    cirr_cols = []
+
+    for v in visits:
+        bili_col = f"bilirubin_v{v}"
+        plt_col  = f"plt_v{v}"
+        ggt_col  = f"ggt_v{v}"
+        stiff_col = f"fibs_stiffness_med_BM_1_v{v}"
+        fibro_col = f"fibrotest_BM_2_v{v}"
+
+        # Vérifier au moins quelques colonnes
+        available = [c for c in [bili_col, plt_col, ggt_col, stiff_col, fibro_col] if c in df.columns]
+        if len(available) < 3:
+            continue
+
+        score = 0
+
+        if bili_col in df:
+            score += (df[bili_col] > 20).astype(float)
+
+        if plt_col in df:
+            score += (df[plt_col] < 150).astype(float)
+
+        if ggt_col in df:
+            score += (df[ggt_col] > 60).astype(float)
+
+        if stiff_col in df:
+            score += (df[stiff_col] > 10).astype(float)
+
+        if fibro_col in df:
+            score += (df[fibro_col] > 0.7).astype(float)
+
+        col_name = f"cirrhosis_score_v{v}"
+        df[col_name] = score
+        cirr_cols.append(col_name)
+
+    # =========================
+    # Résumé global
+    # =========================
+    if cirr_cols:
+        df["cirrhosis_score_max"]   = df[cirr_cols].max(axis=1)
+        #df["cirrhosis_score_mean"]  = df[cirr_cols].mean(axis=1)
+        #df["cirrhosis_score_last"]  = df[cirr_cols].ffill(axis=1).iloc[:, -1]
+        #df["cirrhosis_score_count"] = (df[cirr_cols] >= 2).sum(axis=1)
+        #df["cirrhosis_score_prop"]  = (df[cirr_cols] >= 2).mean(axis=1)
+
+        df = df.drop(columns=cirr_cols)
+
+    return df
+
+
+@app.function
+def create_fibrosis_scores(df, visits=range(1, 23)):
+    """
+    Crée des scores de fibrose inspirés de FIB-4 / APRI + résumé global.
+    """
+
+    import numpy as np
+    df = df.copy()
+
+    fib_cols = []
+
+    for v in visits:
+        age_col  = f"Age_v{v}"
+        ast_col  = f"ast_v{v}"
+        alt_col  = f"alt_v{v}"
+        plt_col  = f"plt_v{v}"
+
+        if not all(c in df.columns for c in [age_col, ast_col, alt_col, plt_col]):
+            continue
+
+        age = df[age_col]
+        ast = df[ast_col]
+        alt = df[alt_col]
+        plt = df[plt_col]
+
+        # =========================
+        # 1. FIB-4 (approximation)
+        # =========================
+        fib4 = (age * ast) / (plt * np.sqrt(alt) + 1e-6)
+        df[f"fib4_v{v}"] = fib4
+
+        # =========================
+        # 2. APRI (simplifié)
+        # =========================
+        apri = (ast / 40) / (plt / 150)
+        df[f"apri_v{v}"] = apri
+
+        # =========================
+        # 3. Score combiné (robuste)
+        # =========================
+        score = (
+            (fib4 > 1.3).astype(float) +
+            (apri > 0.7).astype(float)
+        )
+
+        df[f"fibrosis_score_v{v}"] = score
+        fib_cols.append(f"fibrosis_score_v{v}")
+
+    # =========================
+    # Résumé global
+    # =========================
+    if fib_cols:
+        df["fibrosis_score_max"]   = df[fib_cols].max(axis=1)
+        #df["fibrosis_score_mean"]  = df[fib_cols].mean(axis=1)
+        #df["fibrosis_score_last"]  = df[fib_cols].ffill(axis=1).iloc[:, -1]
+        #df["fibrosis_score_count"] = (df[fib_cols] >= 1).sum(axis=1)
+        #df["fibrosis_score_prop"]  = (df[fib_cols] >= 1).mean(axis=1)
+
+        df = df.drop(columns=fib_cols)
+
+    return df
+
+
+@app.cell
+def _(pd):
+    def add_fibrotest_stage_features(
+        df,
+        visits=range(1, 23),
+        score_prefix="fibrotest_BM_2",
+        keep_visit_columns=False,
+    ):
+        """
+        Encode le score FibroTest en stades F0–F4.
+        Les valeurs manquantes sont remplacées par F0.
+        """
+        df = df.copy()
+
+        fine_cols = []
+        coarse_cols = []
+
+        def _fine_stage(x):
+            if pd.isna(x):
+                return "F0"
+            if x < 0.21:
+                return "F0"
+            elif x < 0.27:
+                return "F0-F1"
+            elif x < 0.31:
+                return "F1"
+            elif x < 0.48:
+                return "F1-F2"
+            elif x < 0.58:
+                return "F2"
+            elif x < 0.72:
+                return "F3"
+            elif x < 0.74:
+                return "F3-F4"
+            else:
+                return "F4"
+
+        def _coarse_stage(x):
+            if pd.isna(x):
+                return 0
+            if x < 0.21:
+                return 0
+            elif x < 0.31:
+                return 1
+            elif x < 0.58:
+                return 2
+            elif x < 0.74:
+                return 3
+            else:
+                return 4
+
+        for v in visits:
+            col = f"{score_prefix}_v{v}"
+            if col not in df.columns:
+                continue
+
+            fine_col = f"fibrosis_stage_v{v}"
+            coarse_col = f"fibrosis_stage_coarse_v{v}"
+
+            df[fine_col] = df[col].apply(_fine_stage)
+            df[coarse_col] = df[col].apply(_coarse_stage)
+
+            #fine_cols.append(fine_col)
+            coarse_cols.append(coarse_col)
+
+        # =========================
+        # Résumés globaux
+        # =========================
+
+        score_cols = [f"{score_prefix}_v{v}" for v in visits if f"{score_prefix}_v{v}" in df.columns]
+
+        if score_cols:
+            df["fibrotest_max"] = df[score_cols].max(axis=1, skipna=True)
+            #df["fibrotest_mean"] = df[score_cols].mean(axis=1, skipna=True)
+            #df["fibrotest_last"] = df[score_cols].ffill(axis=1).iloc[:, -1]
+
+        if coarse_cols:
+            df["fibrosis_stage_max"] = df[coarse_cols].max(axis=1)
+            #df["fibrosis_stage_mean"] = df[coarse_cols].mean(axis=1)
+            #df["fibrosis_stage_last"] = df[coarse_cols].ffill(axis=1).iloc[:, -1]
+
+            # 🔥 très utile
+            df["fibrosis_F3_or_more"] = (df[coarse_cols] >= 3).sum(axis=1)
+            df["fibrosis_F4_any"] = (df[coarse_cols] == 4).any(axis=1).astype(int)
+
+        if not keep_visit_columns:
+            df = df.drop(columns=fine_cols + coarse_cols, errors="ignore")
+
+        return df
+
+    return (add_fibrotest_stage_features,)
+
+
+@app.cell
+def _(np, pd):
+
+    def add_fibrotest_stage_features_v2(
+        df,
+        visits=range(1, 23),
+        score_prefix="fibrotest_BM_2",
+        keep_visit_columns=False,
+    ):
+        """
+        Encode le score FibroTest en stades de fibrose.
+
+        Basé sur les seuils du rapport :
+          0.00-0.21  F0
+          0.21-0.27  F0-F1
+          0.27-0.31  F1
+          0.31-0.48  F1-F2
+          0.48-0.58  F2
+          0.58-0.72  F3
+          0.72-0.74  F3-F4
+          0.74-1.00  F4
+
+        Retourne :
+          - fibrotest_stage_v{v} : stade "fin" (catégorie textuelle)
+          - fibrotest_stage_coarse_v{v} : stade ordinal F0..F4 (0..4)
+          - puis des résumés globaux si au moins une visite existe
+        """
+
+        df = df.copy()
+
+        fine_cols = []
+        coarse_cols = []
+
+        def _fine_stage(x):
+            if pd.isna(x):
+                return np.nan
+            if x < 0.21:
+                return "F0"
+            elif x < 0.27:
+                return "F0-F1"
+            elif x < 0.31:
+                return "F1"
+            elif x < 0.48:
+                return "F1-F2"
+            elif x < 0.58:
+                return "F2"
+            elif x < 0.72:
+                return "F3"
+            elif x < 0.74:
+                return "F3-F4"
+            else:
+                return "F4"
+
+        def _coarse_stage(x):
+            if pd.isna(x):
+                return np.nan
+            if x < 0.21:
+                return 0
+            elif x < 0.31:
+                return 1
+            elif x < 0.58:
+                return 2
+            elif x < 0.74:
+                return 3
+            else:
+                return 4
+
+        for v in visits:
+            col = f"{score_prefix}_v{v}"
+            if col not in df.columns:
+                continue
+
+            fine_col = f"fibrosis_stage_v{v}"
+            coarse_col = f"fibrosis_stage_coarse_v{v}"
+
+            df[fine_col] = df[col].apply(_fine_stage)
+            df[coarse_col] = df[col].apply(_coarse_stage)
+
+            fine_cols.append(fine_col)
+            coarse_cols.append(coarse_col)
+
+        # Résumés globaux sur le score numérique FibroTest
+        score_cols = [f"{score_prefix}_v{v}" for v in visits if f"{score_prefix}_v{v}" in df.columns]
+        if score_cols:
+            df["fibrotest_max"] = df[score_cols].max(axis=1, skipna=True)
+            #df["fibrotest_mean"] = df[score_cols].mean(axis=1, skipna=True)
+            #df["fibrotest_last"] = df[score_cols].ffill(axis=1).iloc[:, -1]
+
+            # Résumé global du stade coarse
+            df["fibrosis_stage_max"] = df[coarse_cols].max(axis=1, skipna=True) if coarse_cols else np.nan
+            #df["fibrosis_stage_mean"] = df[coarse_cols].mean(axis=1, skipna=True) if coarse_cols else np.nan
+            #df["fibrosis_stage_last"] = df[coarse_cols].ffill(axis=1).iloc[:, -1] if coarse_cols else np.nan
+
+        if not keep_visit_columns:
+            drop_cols = fine_cols + coarse_cols
+            df = df.drop(columns=drop_cols, errors="ignore")
+
+        return df
+
+    return
 
 
 @app.cell(hide_code=True)
@@ -807,9 +1188,70 @@ def _(np, re):
 
 
 @app.cell
+def _(np):
+
+    def encode_biomarker_measurement_presence(
+        df,
+        biomarkers=None,
+        visits=range(1, 23),
+        overwrite=True,
+    ):
+        """
+        Encode toutes les colonnes longitudinales des biomarqueurs en binaire :
+        - 1 si une mesure est présente
+        - 0 si NaN
+
+        Les colonnes Age_v* ne sont pas modifiées.
+        Les colonnes d'événements ne sont pas modifiées.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+        biomarkers : list[str] or None
+            Liste des biomarqueurs à encoder. Si None, utilise une liste par défaut.
+        visits : iterable
+            Numéros de visites à parcourir.
+        overwrite : bool
+            Si True, remplace les valeurs originales dans les colonnes biomarqueurs.
+            Si False, crée de nouvelles colonnes suffixées "_present".
+
+        Returns
+        -------
+        pd.DataFrame
+        """
+        df = df.copy()
+
+        if biomarkers is None:
+            biomarkers = [
+                "BMI", "alt", "ast", "bilirubin", "chol", "ggt",
+                "gluc_fast", "plt", "triglyc",
+                "aixp_aix_result_BM_3",
+                "fibrotest_BM_2",
+                "fibs_stiffness_med_BM_1"
+            ]
+
+        for biom in biomarkers:
+            for v in visits:
+                col = f"{biom}_v{v}"
+                if col not in df.columns:
+                    continue
+
+                presence = df[col].notna().astype(np.int8)
+
+                if overwrite:
+                    df[col] = presence
+                else:
+                    df[f"{col}_present"] = presence
+
+        return df
+
+    return
+
+
+@app.cell
 def _(np, re):
 
-    def extract_last_available_values(df):
+    def extract_last_available_values(df, remove = True):
         df = df.copy()
 
         # -----------------------------
@@ -879,15 +1321,16 @@ def _(np, re):
 
                 for j in range(N_LAST):
                     last_values[j].append(vals[j])
+            if remove:        
 
-            # création des colonnes
-            for j in range(N_LAST):
-                if j == 0:
-                    col_name = f"{biom}_last"
-                else:
-                    col_name = f"{biom}_last_minus{j}"
-
-                df[col_name] = last_values[j]
+                # création des colonnes
+                for j in range(N_LAST):
+                    if j == 0:
+                        col_name = f"{biom}_last"
+                    else:
+                        col_name = f"{biom}_last_minus{j}"
+    
+                    df[col_name] = last_values[j]
 
             visit_cols_to_drop.extend(biom_cols)
 
@@ -924,9 +1367,14 @@ def _(df):
 
 
 @app.cell
+def _():
+    return
+
+
+@app.cell
 def _(
+    add_fibrotest_stage_features,
     add_first_last_visits,
-    add_missingness_features,
     add_patient_summary_metrics,
     add_visit_metrics,
     create_alt_ast_ratio,
@@ -936,15 +1384,15 @@ def _(
     pd,
 ):
 
-    train_df_hep = pd.get_dummies(extract_last_available_values(extract_last_observed_age(add_missingness_features(create_alt_ast_ratio(add_visit_metrics(add_first_last_visits(add_patient_summary_metrics(df))))))), columns=['gender', "T2DM",'Hypertension', 'Dyslipidaemia','bariatric_surgery'], drop_first=True)
-
-    #Rajouter extract_last_available_values
+    train_df_hep = pd.get_dummies(extract_last_available_values(extract_last_observed_age(create_cirrhosis_proxy(add_fibrotest_stage_features(create_alt_ast_ratio(create_metabolic_syndrome_v2(add_visit_metrics(add_first_last_visits(add_patient_summary_metrics(df)))))))), remove=False), columns=['gender', "T2DM",'Hypertension', 'Dyslipidaemia','bariatric_surgery'], drop_first=True)
     return (train_df_hep,)
 
 
 @app.cell
 def _(
     add_exam_within_2y_count,
+    add_fibrotest_stage_features,
+    add_first_last_visits,
     add_patient_summary_metrics,
     add_visit_metrics,
     compute_patient_slopes_theilsen,
@@ -955,9 +1403,8 @@ def _(
     pd,
 ):
 
-    train_df_death = pd.get_dummies(extract_last_available_values(extract_last_observed_age(add_exam_within_2y_count(add_visit_metrics(add_patient_summary_metrics(compute_patient_slopes_theilsen(create_change_scores(count_non_na_longitudinal(df)))))))), columns=['gender', "T2DM",'Hypertension', 'Dyslipidaemia','bariatric_surgery'], drop_first=True)
+    train_df_death = pd.get_dummies(extract_last_available_values(extract_last_observed_age(create_cirrhosis_proxy(add_fibrotest_stage_features(add_exam_within_2y_count(add_visit_metrics(add_first_last_visits(add_patient_summary_metrics(compute_patient_slopes_theilsen(create_change_scores(count_non_na_longitudinal(df))))))))))), columns=['gender', "T2DM",'Hypertension', 'Dyslipidaemia','bariatric_surgery'], drop_first=True)
 
-    # J'ai enlevé le add_exam_within_2y_count
     return (train_df_death,)
 
 
@@ -1147,8 +1594,9 @@ def prepare_survival_targets_robust(Surv, np, pd):
             is_event,
 
             df[time_col] - df[baseline_col],
-
+            #df[time_col],
             df[last_observed_col] - df[baseline_col],
+            #df[last_observed_col],
 
         ).astype(float)
 
@@ -1238,7 +1686,7 @@ def _(prepare_survival_targets_robust, train_df_death, train_df_hep):
     # --- Sanity check ---
     df_hep,   y_hep  =prepare_survival_targets_robust(train_df_hep, outcome='hepatic')
     df_death, y_death = prepare_survival_targets_robust(train_df_death, outcome='death')
-    return df_death, df_hep, y_hep
+    return df_death, df_hep, y_death, y_hep
 
 
 @app.cell(hide_code=True)
@@ -1305,7 +1753,7 @@ def _(ID_COLS, MAX_MISSING_RATE, TARGET_COLS, df_death, df_hep):
     print(f'Death   features after missing filter : {len(keep_death)}  '
           f'(EPV = {int((df_death["death"]==1).sum())}/{len(keep_death)} = '
           f'{(df_death["death"]==1).sum()/len(keep_death):.2f})')
-    return X_hep_aln, build_feature_matrix, keep_death, keep_hep
+    return X_death_aln, X_hep_aln, build_feature_matrix, keep_death, keep_hep
 
 
 @app.cell(hide_code=True)
@@ -1330,19 +1778,18 @@ def _(mo):
 
 @app.cell
 def _(
-    IterativeImputer,
     KFold,
     Pipeline,
     RandomSurvivalForest,
+    SimpleImputer,
     concordance_index_censored,
     np,
 ):
     def make_rsf_pipeline():
         """RSF with min_samples_leaf=20 to reduce overfitting on rare events."""
         return Pipeline([
-            #('imp', SimpleImputer(strategy='median')),
-            #('imp', IterativeImputer(ExtraTreesRegressor(n_estimators=50, random_state=0))),
-            ('imp', IterativeImputer()), # max_iter=10 and tol =0.001
+            ('imp', SimpleImputer(strategy='median')),
+            #('imp', IterativeImputer()), # max_iter=10 and tol =0.001
 
 
             ('rsf', RandomSurvivalForest(
@@ -1382,7 +1829,7 @@ def _(
         return np.mean(scores), np.std(scores)
 
 
-    return (cv_rsf,)
+    return cv_rsf, make_rsf_pipeline
 
 
 @app.cell
@@ -1393,17 +1840,17 @@ def _():
 
 
 @app.cell
-def _():
+def _(X_death_aln, cv_rsf, y_death):
     print('Fitting Death — RSF (CV)...')
-    #ci_rsf_death_mean, ci_rsf_death_std = cv_rsf(X_death_aln, y_death)
+    ci_rsf_death_mean, ci_rsf_death_std = cv_rsf(X_death_aln.astype("float32"), y_death)
 
     #print(f'  RSF  C-index (CV): {ci_rsf_death_mean:.4f} ± {ci_rsf_death_std:.4f}')
-    return
+    return ci_rsf_death_mean, ci_rsf_death_std
 
 
 @app.cell
-def _():
-    #print(f'  RSF  C-index (CV): {ci_rsf_death_mean:.4f} ± {ci_rsf_death_std:.4f}')
+def _(ci_rsf_death_mean, ci_rsf_death_std):
+    print(f'  RSF  C-index (CV): {ci_rsf_death_mean:.4f} ± {ci_rsf_death_std:.4f}')
     return
 
 
@@ -1419,9 +1866,10 @@ def _(X_hep_aln, cv_rsf, y_hep):
 @app.cell
 def _(ci_rsf_hep_mean, ci_rsf_hep_std):
     print(f'  RSF  C-index (CV): {ci_rsf_hep_mean:.4f} ± {ci_rsf_hep_std:.4f}')
-    #0.8572 - 0.8619 - 0.8663 - 0.8709 - 0.8805 pour pd.get_dummies(extract_last_observed_age(create_alt_ast_ratio(add_visit_metrics(add_first_last_visits(add_patient_summary_metrics(df))))), columns=['gender', "T2DM",'Hypertension', 'Dyslipidaemia','bariatric_surgery'], drop_first=True)
+    #0.8572 - 0.8619 - 0.8663 - 0.8709 - 0.8781 pour pd.get_dummies(extract_last_observed_age(create_alt_ast_ratio(add_visit_metrics(add_first_last_visits(add_patient_summary_metrics(df))))), columns=['gender', "T2DM",'Hypertension', 'Dyslipidaemia','bariatric_surgery'], drop_first=True)
 
-    # ---> 
+    # ---> tester pour la death les fonctions de missingness
+    #---> à voir lorsqu'on aura la cirrhose en plus
 
     #--> puis faire un feature importance
     # Et se faire la réflexion sur ce que je fais si il y a valeurs manquantes --> imputer signifie que la valeur a été faite ce qui n'est pas le cas donc rajouter une variable is_measured pour chaque variable
@@ -1453,19 +1901,133 @@ def _():
 
 
 @app.cell
-def _():
+def _(X_death_aln, make_rsf_pipeline, y_death):
     from select_model import make_rsf_rfecv_pipeline, make_gbsa_rfecv_pipeline
 
-    #model_death = make_gbsa_rfecv_pipeline()
-    #model_death.fit(X_death_aln, y_death)
+    model_death = make_rsf_pipeline()
+    model_death.fit(X_death_aln, y_death)
+    return (model_death,)
+
+
+@app.cell
+def _(X_hep_aln, make_rsf_pipeline, y_hep):
+
+    model_hep = make_rsf_pipeline()
+    model_hep.fit(X_hep_aln, y_hep)
+    return (model_hep,)
+
+
+@app.cell
+def _(TableReport, X_hep_aln):
+    TableReport(X_hep_aln) # mean_age_diff : imputer par 0, min_biomarquer et peut-être supprimer last_biomarqueur et first_biomarqueur ou sinon et peut-être supprimer age_range et min_age et max_age
+    return
+
+
+@app.cell
+def _(TableReport, X_death_aln):
+    TableReport(X_death_aln)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # Analyse de la feature_importance
+    """)
+    return
+
+
+@app.cell
+def _(concordance_index_censored, np, pd):
+    def permutation_importance_cindex(model, X, y, n_repeats=5):
+        baseline_preds = model.predict(X)
+
+        baseline_score = concordance_index_censored(
+            y[y.dtype.names[0]],
+            y[y.dtype.names[1]],
+            baseline_preds
+        )[0]
+
+        importances = []
+
+        for col in X.columns:
+            scores = []
+
+            for _ in range(n_repeats):
+                X_permuted = X.copy()
+                X_permuted[col] = np.random.permutation(X_permuted[col])
+
+                preds = model.predict(X_permuted)
+
+                score = concordance_index_censored(
+                    y[y.dtype.names[0]],
+                    y[y.dtype.names[1]],
+                    preds
+                )[0]
+
+                scores.append(baseline_score - score)
+
+            importances.append(np.mean(scores))
+
+        return pd.Series(importances, index=X.columns).sort_values(ascending=False)
+
+    return (permutation_importance_cindex,)
+
+
+@app.cell
+def _(model_hep):
+    rsf = model_hep.named_steps['rsf']
+    return (rsf,)
+
+
+@app.cell
+def _(X_hep_aln, model_hep):
+    imp = model_hep.named_steps['imp']
+
+    X_imputed = imp.transform(X_hep_aln)
+    return
+
+
+@app.cell
+def _(X_hep_aln, rsf):
+    import shap
+
+    explainer = shap.Explainer(rsf.predict, X_hep_aln)
+
+
     return
 
 
 @app.cell
 def _():
+    #shap_values = explainer(X_hep_aln)
 
-    #model_hep = make_gbsa_rfecv_pipeline()
-    #model_hep.fit(X_hep_aln, y_hep)
+    return
+
+
+@app.cell
+def _():
+    #shap.summary_plot(shap_values, X)
+    return
+
+
+@app.cell
+def _(X_hep_aln, model_hep, permutation_importance_cindex, y_hep):
+
+
+    result = permutation_importance_cindex(
+        model_hep,
+        X_hep_aln, y_hep,
+        n_repeats=10,
+    )
+
+
+    return (result,)
+
+
+@app.cell
+def _(result):
+    result
     return
 
 
@@ -1486,30 +2048,44 @@ def _(mo):
 
 
 @app.cell
-def _():
-    """
-    test_df_tr = pd.get_dummies(extract_last_available_values(add_exam_within_2y_count(add_visit_metrics(add_patient_summary_metrics(compute_patient_slopes_theilsen(create_change_scores(count_non_na_longitudinal(test_df))))))), columns=['gender', "T2DM",'Hypertension', 'Dyslipidaemia','bariatric_surgery'], drop_first=True)
+def _(
+    add_exam_within_2y_count,
+    add_fibrotest_stage_features,
+    add_first_last_visits,
+    add_patient_summary_metrics,
+    add_visit_metrics,
+    compute_patient_slopes_theilsen,
+    create_alt_ast_ratio,
+    create_change_scores,
+    extract_last_available_values,
+    extract_last_observed_age,
+    pd,
+    test_df,
+):
 
-    """
-    return
+    test_df_hep = pd.get_dummies(extract_last_available_values(extract_last_observed_age(create_cirrhosis_proxy(add_fibrotest_stage_features(create_alt_ast_ratio(create_metabolic_syndrome_v2(add_visit_metrics(add_first_last_visits(add_patient_summary_metrics(test_df)))))))),remove = False), columns=['gender', "T2DM",'Hypertension', 'Dyslipidaemia','bariatric_surgery'], drop_first=True)
+
+    test_df_death = pd.get_dummies(extract_last_available_values(extract_last_observed_age(create_cirrhosis_proxy(add_fibrotest_stage_features(add_exam_within_2y_count(add_visit_metrics(add_first_last_visits(add_patient_summary_metrics(compute_patient_slopes_theilsen(create_change_scores(count_non_na_longitudinal(test_df))))))))))), columns=['gender', "T2DM",'Hypertension', 'Dyslipidaemia','bariatric_surgery'], drop_first=True)
+    return test_df_death, test_df_hep
 
 
 @app.cell
-def _(build_feature_matrix, keep_death, keep_hep, test_df_tr):
+def _(build_feature_matrix, keep_death, keep_hep, test_df_death, test_df_hep):
 
 
-    X_pred_raw  = build_feature_matrix(test_df_tr)
+    X_pred_raw_hep  = build_feature_matrix(test_df_hep)
+    X_pred_raw_death  = build_feature_matrix(test_df_death)
 
 
 
-    print(f'Raw feature count: {X_pred_raw.shape[1]}')
+    print(f'Raw feature count: {X_pred_raw_hep.shape[1]}')
 
 
     # Final aligned matrices
 
 
-    X_pred_hep  = X_pred_raw[keep_hep]
-    X_pred_death= X_pred_raw[keep_death]
+    X_pred_hep  = X_pred_raw_hep[keep_hep]
+    X_pred_death= X_pred_raw_death[keep_death]
     return X_pred_death, X_pred_hep
 
 
@@ -1584,8 +2160,8 @@ def _(pd, preds_death, preds_hep, test_df):
         'risk_death':         preds_death,
     })
 
-    submission.to_csv('submission_0205_v2.csv', index=False)
-    print(f'Saved {len(submission)} predictions → submission_0205_v2.csv')
+    submission.to_csv('submission_0505_v4.csv', index=False)
+    print(f'Saved {len(submission)} predictions → submission_0505_v4.csv')
     print(submission.head())
     return
 
@@ -2350,22 +2926,6 @@ def _(Surv, np, pd):
 
         return df.reset_index(drop=True), y
 
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## 2.0 Création de la colonne ALT/ AST
-    """)
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    # Création d'une variable metabolic_syndrome
-    """)
     return
 
 
