@@ -1,7 +1,7 @@
 
 # ANNITIA: risk stratification of metabolic dysfunction-associated steatotic liver disease (MASLD) through AI
 
-The objective is to develop a risk stratification score to predict liver events related to the progression of MASLD based on non-invasive tests (NITs) repeated over time. Understanding how the trajectories of repeat NITs are associated with the disease progression is crucial for improving the current epidemiological surveillance for MASLD and for better personalizing the patients follow-up healthcare.
+The objective is to develop a risk stratification score to predict liver events related to the progression of MASLD based on non-invasive tests (NITs) repeated over time. Understanding how the trajectories of repeat NITs are associated with the disease progression is crucial for improving the current epidemiological surveillance for MASLD and for better personalizing the patient's follow-up healthcare.
 
 This project is supported by France 2030 in partnership with the Health Data Hub.
 
