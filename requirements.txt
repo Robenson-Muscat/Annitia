@@ -1,0 +1,15 @@
+# A mettre dans le README
+
+python -m venv annitia
+source annitia/bin/activate ou annitia\Scripts\activate
+pip install pandas
+pip install matplotlib
+pip install numpy>=2.0
+pip install scikit-learn==1.8.0
+pip install bottleneck
+pip install scikit-survival
+
+#Pour conda
+conda create -n annitia python==3.9 -y
+conda activate annitia
+
