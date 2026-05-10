@@ -50,6 +50,6 @@ This extended dataset provides an ideal foundation for training and evaluating m
 
 ```
 python -m venv annitia
-annitia\Scripts\activate
+Scripts\activate
 pip install -r requirements.txt
 ```
