@@ -44,3 +44,12 @@ One outcome column summarizing the liver-related events (composite endpoint) occ
 One outcome column informing the death status (all-cause mortality): to be predicted.
 
 This extended dataset provides an ideal foundation for training and evaluating machine learning models, offering participants a great opportunity to work with synthetic data generated from real-world medical data.
+
+
+## Requirements
+
+'''
+python -m venv annitia
+annitia\Scripts\activate
+pip install -r requirements.txt
+'''
