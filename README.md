@@ -1,5 +1,23 @@
 
-# ANNITIA: risk stratification of metabolic dysfunction-associated steatotic liver disease (MASLD) through AI
+
+
+<div align="center">
+
+  <h1>ANNITIA: risk stratification of metabolic dysfunction-associated steatotic liver disease (MASLD) through AI</h1>
+
+  <br>
+
+  <h4>
+    • <a href="https://app.trustii.io/datasets/1551" target="_blank">[Challenge page]</a> •
+  </h4>
+
+  <p>
+  <strong>⚠️ Please sign up first to access the challenge.</strong>
+  </p>
+
+
+</div>
+
 
 The objective is to develop a risk stratification score to predict liver events related to the progression of MASLD based on non-invasive tests (NITs) repeated over time. Understanding how the trajectories of repeat NITs are associated with the disease progression is crucial for improving the current epidemiological surveillance for MASLD and for better personalizing the patient's follow-up healthcare.
 
@@ -50,6 +68,8 @@ This extended dataset provides an ideal foundation for training and evaluating m
 
 ```
 python -m venv annitia
-Scripts\activate
+source annitia/bin/activate
 pip install -r requirements.txt
 ```
+
+
