@@ -72,4 +72,20 @@ source annitia/bin/activate
 pip install -r requirements.txt
 ```
 
+## Data
+
+Please check out the [following page](https://app.trustii.io/datasets/1551) to download data. 
+
+## Training 
+
+To train our model,
+
+```
+python train.py
+```
+
+It also applies our customized preprocessing (new features, change scores, summary metrics) and then trains a RandomSurvivalForest using cross-validation.
+
+
+
 
