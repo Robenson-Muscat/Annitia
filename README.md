@@ -62,7 +62,7 @@ Biochemical parameters (from baseline to follow-up): repeated measurements of AL
 Biomarkers (NIT, from baseline to follow-up): repeated measurements of FibroTest, FibroScan and Aixplorer.
 Outcomes: occurrence of major liver events and all-cause mortality.
 
-
+```mermaid
 flowchart TD
     A["Raw longitudinal data"] --> B["Preprocessing and feature engineering"]
 
@@ -91,7 +91,7 @@ flowchart TD
     class D,E,F,G model
     class H,I,J evaluation
     class K output
-
+```
 
 
 ### Building a comprehensive dataset
