@@ -167,9 +167,9 @@ Patients with missing event indicators, missing event times for observed events,
 
 **3. Feature selection and preprocessing**
 
-Before model training, the feature matrices are constructed by removing: Longitudinal age variables (Age_vX) to prevent information leakage.
+Before model training, the feature matrices are constructed by removing longitudinal age variables to prevent information leakage.
 
-A dedicated preprocessing pipeline is then applied independently within each cross-validation training fold: Missing-rate filtering (features with more than 50% missing values are removed) and Median imputation (better results than iterative imputation).
+A dedicated preprocessing pipeline is then applied independently within each cross-validation training fold with a  *Missing-rate filtering* (features with more than 50% missing values are removed) and *median imputation* (better results than iterative imputation).
 Importantly, feature selection and imputation are fitted exclusively on the training portion of each fold, preventing information from validation observations from influencing preprocessing.
 
 
