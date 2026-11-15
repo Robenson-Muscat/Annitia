@@ -59,9 +59,13 @@ The ANNITIA team has explored the clinical records of thousands of patients (who
 
 1,676 synthetic patients
 Clinical data: age at baseline, gender, BMI (during follow-up), and medical history (diabetes, hypertension, dyslipidemia and bariatric surgery).
+
 Biochemical parameters (from baseline to follow-up): repeated measurements of ALT, AST, GGT, bilirubin, platelets, glycemia, triglycerides, total-cholesterol.
+
 Biomarkers (NIT, from baseline to follow-up): repeated measurements of FibroTest, FibroScan and Aixplorer.
+
 Outcomes: occurrence of major liver events and all-cause mortality.
+
 22 data points describing the patient over time of each examen performed, with the corresponding age, BMI and biochemical parameters. Up to 3 NITs usually measured for assessing fibrosis progression.
 
 Please check out the [following page](https://app.trustii.io/datasets/1551) to download data. 
@@ -149,11 +153,11 @@ flowchart TD
 ```
 ### Training and validation
 
-1. Model architecture
+**1. Model architecture**
 
 Two independent survival prediction models are developed to predict the risk of experiencing the two clinical endpoints. Both models are based on the Random Survival Forest (RSF) algorithm implemented in `scikit-survival`. Each model is trained independently using its corresponding endpoint-specific feature set and survival targets.
 
-2. Survival target construction
+**2. Survival target construction**
 
 For each endpoint, survival targets are constructed using the observed event indicator and event time. The follow-up duration is calculated relative to the patient's baseline age (Age_v1):
 
@@ -162,7 +166,7 @@ Patients without an observed event: survival time corresponds to the last observ
 
 Patients with missing event indicators, missing event times for observed events, or invalid follow-up durations are excluded from the corresponding analysis. Zero survival times are replaced with a small positive value to ensure compatibility with survival modelling requirements.
 
-3. Feature selection and preprocessing
+**3. Feature selection and preprocessing**
 
 Before model training, the feature matrices are constructed by removing:
 
@@ -178,7 +182,7 @@ Median imputation: remaining missing values are replaced using the median of eac
 
 Importantly, feature selection and imputation are fitted exclusively on the training portion of each fold, preventing information from validation observations from influencing preprocessing.
 
-4. Nested cross-validation and hyperparameter optimization
+**4. Nested cross-validation and hyperparameter optimization**
 
 Model performance and hyperparameter selection are assessed using a nested cross-validation strategy.
 
@@ -187,12 +191,6 @@ The procedure consists of two levels:
 Outer cross-validation (4 folds)
 
 The dataset is divided into four folds using shuffled K-fold splitting with a fixed random seed for reproducibility.
-
-For each iteration:
-
-Three folds are used for model development and hyperparameter optimization.
-The remaining fold is kept untouched for independent validation.
-The optimized model is evaluated on this outer validation fold using the Concordance Index (C-index).
 This procedure provides an estimate of model generalization performance while limiting optimistic bias associated with hyperparameter selection.
 
 Inner cross-validation (3 folds)
@@ -201,7 +199,7 @@ Within each outer training set, a 3-fold cross-validation procedure is used to o
 Hyperparameter optimization is performed using RandomizedSearchCV, with 30 randomly sampled parameter combinations.
 The best configuration is selected based on the mean inner cross-validation C-index.
 
-5. Model evaluation
+**5. Model evaluation**
 
 The optimized model from each outer fold is evaluated on its corresponding held-out validation fold.
 The evaluation metric is the Concordance Index (C-index), calculated using concordance_index_censored from scikit-survival.
@@ -216,14 +214,14 @@ Best hyperparameters selected in each fold.
 Additionally, feature selection stability is assessed by recording how frequently each feature is retained across the four outer training folds. This provides an indication of the consistency of the missing-rate filtering procedure.
 
 
-6. Final model training
+**6. Final model training**
 
 Following nested cross-validation, two final Random Survival Forest models are trained independently for the hepatic and death endpoints.
 For each endpoint, hyperparameter optimization is repeated using 3-fold cross-validation on the complete available training dataset.
 The best-performing configuration is then automatically refitted on the entire endpoint-specific training dataset using RandomizedSearchCV(refit=True).
 These final models are subsequently used to generate predictions for the held-out validation/test dataset.
 
-7. Risk prediction and submission generation
+**7. Risk prediction and submission generation**
 
 The trained models generate an individual risk score for each patient and each clinical endpoint.
 The resulting predictions are saved in a CSV file.
@@ -234,11 +232,6 @@ To train our model,
 ```
 python train.py
 ```
-
-It applies our customized preprocessing , then trains and validate a RandomSurvivalForest using a robust validation strategy : nested cross-validation.
-
-
-Ce que ca print et ce que ca submit 
 
 ## Results
 
