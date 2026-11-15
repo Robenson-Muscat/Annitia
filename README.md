@@ -93,10 +93,9 @@ Feature engineering is performed separately depending on the prediction task (he
 
 The first step consists of extracting relevant information from repeated measurements collected during patient follow-up. Several patient-level summary features are generated, including:
 
-
 - Follow-up characteristics: number of available visits, last observed age, first and last available visits for each biomarker, and age differences between consecutive visits.
 - Measurement availability: number of non-missing measurements for each longitudinal variable and average number of measurements per visit.
-- Biomarker evolution: minimum, maximum, range, and mean differences between successive measurements.
+- Biomarker evolution: rolling statistics.
 - Longitudinal trends: percentage changes relative to baseline and individual biomarker progression slopes estimated using the robust Theil-Sen method.
 
 **Clinical and biological feature engineering**
@@ -104,21 +103,21 @@ The first step consists of extracting relevant information from repeated measure
 Additional clinically relevant features are derived from longitudinal laboratory measurements and clinical characteristics:
 
 - Metabolic syndrome proxy score: Composite score based on BMI, fasting glucose, triglycerides, hypertension, type 2 diabetes, and dyslipidaemia.
-- ALT/AST ratio: Calculation of the ALT-to-AST ratio at each available visit.
-- Fibrosis staging: Conversion of continuous FibroTest scores into categorical fibrosis stages (F0–F4), followed by the extraction of maximum fibrosis stage and advanced fibrosis indicators.
 - Cirrhosis proxy score: Composite score based on bilirubin, platelet count, GGT, liver stiffness, and FibroTest measurements.
+- ALT/AST ratio: Calculation of the ALT-to-AST ratio at each available visit.
+
 
 **Task-specific feature engineering**
 
 Two distinct feature-engineering strategies are implemented according to the prediction objective:
 
-Hepatic events prediction (hep): focuses on clinical and biological status, fibrosis severity, cirrhosis-related indicators, and the most recent available biomarker measurements. The original longitudinal biomarker columns are retained during the extraction of the latest measurements.
+Hepatic events prediction (hep): focuses on clinical and biological status, fibrosis severity, cirrhosis-related indicators, and the most recent available biomarker measurements. 
 
-Mortality prediction (death): incorporates additional longitudinal information, including the number of available measurements, percentage changes from baseline, Theil-Sen progression slopes, and the number of examination intervals shorter than or equal to two years. The original longitudinal biomarker columns are removed after extracting the most recent available measurements.
+Mortality prediction : incorporates additional longitudinal information, including the number of available measurements, percentage changes from baseline, Theil-Sen progression slopes0
 
 **Final preprocessing**
 
-Finally, categorical variables, including gender, type 2 diabetes, hypertension, dyslipidaemia, and bariatric surgery, are converted into binary dummy variables using one-hot encoding. The resulting datasets contain engineered patient-level features tailored to each prediction task and are ready for subsequent modelling.
+The resulting datasets contain engineered patient-level features tailored to each prediction task and are ready for subsequent modelling.
 
 The complete preprocessing workflow is implemented in *[`preprocessing.py`](here).*
 
@@ -164,16 +163,15 @@ For each endpoint, survival targets are constructed using the observed event ind
 
 - Patients experiencing an event: survival time corresponds to the age at event occurrence minus baseline age.
 - Patients without an observed event: survival time corresponds to the last observed age minus baseline age. These patients are treated as right-censored observations.
-
 Patients with missing event indicators, missing event times for observed events, or invalid follow-up durations are excluded from the corresponding analysis.
 
 **3. Feature selection and preprocessing**
 
 Before model training, the feature matrices are constructed by removing: Longitudinal age variables (Age_vX) to prevent information leakage.
 
-A dedicated preprocessing pipeline is then applied independently within each cross-validation training fold: Missing-rate filtering (features with more than 50% missing values are removed) and Median imputation (better results than iterative imputation)
-
+A dedicated preprocessing pipeline is then applied independently within each cross-validation training fold: Missing-rate filtering (features with more than 50% missing values are removed) and Median imputation (better results than iterative imputation).
 Importantly, feature selection and imputation are fitted exclusively on the training portion of each fold, preventing information from validation observations from influencing preprocessing.
+
 
 **4. Model evaluation**
 
