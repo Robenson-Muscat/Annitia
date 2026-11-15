@@ -103,10 +103,10 @@ The first step consists of extracting relevant information from repeated measure
 
 Additional clinically relevant features are derived from longitudinal laboratory measurements and clinical characteristics:
 
-Metabolic syndrome proxy score: Composite score based on BMI, fasting glucose, triglycerides, hypertension, type 2 diabetes, and dyslipidaemia.
-ALT/AST ratio: Calculation of the ALT-to-AST ratio at each available visit.
-Fibrosis staging: Conversion of continuous FibroTest scores into categorical fibrosis stages (F0–F4), followed by the extraction of maximum fibrosis stage and advanced fibrosis indicators.
-Cirrhosis proxy score: Composite score based on bilirubin, platelet count, GGT, liver stiffness, and FibroTest measurements.
+- Metabolic syndrome proxy score: Composite score based on BMI, fasting glucose, triglycerides, hypertension, type 2 diabetes, and dyslipidaemia.
+- ALT/AST ratio: Calculation of the ALT-to-AST ratio at each available visit.
+- Fibrosis staging: Conversion of continuous FibroTest scores into categorical fibrosis stages (F0–F4), followed by the extraction of maximum fibrosis stage and advanced fibrosis indicators.
+- Cirrhosis proxy score: Composite score based on bilirubin, platelet count, GGT, liver stiffness, and FibroTest measurements.
 
 **Task-specific feature engineering**
 
@@ -162,67 +162,38 @@ Two independent survival prediction models are developed to predict the risk of 
 
 For each endpoint, survival targets are constructed using the observed event indicator and event time. The follow-up duration is calculated relative to the patient's baseline age (Age_v1):
 
-Patients experiencing an event: survival time corresponds to the age at event occurrence minus baseline age.
-Patients without an observed event: survival time corresponds to the last observed age minus baseline age. These patients are treated as right-censored observations.
+- Patients experiencing an event: survival time corresponds to the age at event occurrence minus baseline age.
+- Patients without an observed event: survival time corresponds to the last observed age minus baseline age. These patients are treated as right-censored observations.
 
-Patients with missing event indicators, missing event times for observed events, or invalid follow-up durations are excluded from the corresponding analysis. Zero survival times are replaced with a small positive value to ensure compatibility with survival modelling requirements.
-
+Patients with missing event indicators, missing event times for observed events, or invalid follow-up durations are excluded from the corresponding analysis.
 **3. Feature selection and preprocessing**
 
-Before model training, the feature matrices are constructed by removing:
+Before model training, the feature matrices are constructed by removing: Longitudinal age variables (Age_vX) to prevent information leakage.
 
-Patient identifiers.
-Target variables and event-related information.
-Longitudinal age variables (Age_vX).
-The last_observed_age variable, to prevent information leakage.
-
-A dedicated preprocessing pipeline is then applied independently within each cross-validation training fold:
-
-Missing-rate filtering: features with more than 50% missing values are removed.
-Median imputation: remaining missing values are replaced using the median of each feature.
+A dedicated preprocessing pipeline is then applied independently within each cross-validation training fold: Missing-rate filtering (features with more than 50% missing values are removed) and Median imputation (better results than iterative imputation)
 
 Importantly, feature selection and imputation are fitted exclusively on the training portion of each fold, preventing information from validation observations from influencing preprocessing.
 
-**4. Nested cross-validation and hyperparameter optimization**
-
+**4. Model evaluation**
 Model performance and hyperparameter selection are assessed using a nested cross-validation strategy.
-
-The procedure consists of two levels:
-
-Outer cross-validation (4 folds)
-
-The dataset is divided into four folds using shuffled K-fold splitting with a fixed random seed for reproducibility.
-This procedure provides an estimate of model generalization performance while limiting optimistic bias associated with hyperparameter selection.
-
-Inner cross-validation (3 folds)
-
-Within each outer training set, a 3-fold cross-validation procedure is used to optimize the Random Survival Forest hyperparameters.
-Hyperparameter optimization is performed using RandomizedSearchCV, with 30 randomly sampled parameter combinations.
-The best configuration is selected based on the mean inner cross-validation C-index.
-
-**5. Model evaluation**
-
 The optimized model from each outer fold is evaluated on its corresponding held-out validation fold.
 The evaluation metric is the Concordance Index (C-index), calculated using concordance_index_censored from scikit-survival.
 
 For each endpoint, the following results are reported:
 
-C-index for each outer validation fold.
-Mean outer cross-validation C-index.
-Standard deviation across the four outer folds.
-Best hyperparameters selected in each fold.
+- C-index for each outer validation fold.
+- Mean outer cross-validation C-index.
+- Standard deviation across the four outer folds.
+- Best hyperparameters selected in each fold.
 
 Additionally, feature selection stability is assessed by recording how frequently each feature is retained across the four outer training folds. This provides an indication of the consistency of the missing-rate filtering procedure.
 
 
-**6. Final model training**
+**5. Final model training**
 
 Following nested cross-validation, two final Random Survival Forest models are trained independently for the hepatic and death endpoints.
 For each endpoint, hyperparameter optimization is repeated using 3-fold cross-validation on the complete available training dataset.
-The best-performing configuration is then automatically refitted on the entire endpoint-specific training dataset using RandomizedSearchCV(refit=True).
 These final models are subsequently used to generate predictions for the held-out validation/test dataset.
-
-**7. Risk prediction and submission generation**
 
 The trained models generate an individual risk score for each patient and each clinical endpoint.
 The resulting predictions are saved in a CSV file.
@@ -233,10 +204,4 @@ To train our model,
 ```
 python train.py
 ```
-
-## Results
-
-Hepatic nested CV: 0.8664 ± 0.0986
-Death nested CV:   0.9473 ± 0.0266
-
 
