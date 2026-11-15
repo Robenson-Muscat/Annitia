@@ -76,7 +76,93 @@ pip install -r requirements.txt
 
 Please check out the [following page](https://app.trustii.io/datasets/1551) to download data. 
 
-## Training 
+## Method
+
+### Preprocessing
+
+The preprocessing pipeline is designed to transform longitudinal clinical and biological data into patient-level features suitable for downstream predictive modelling. It accounts for repeated measurements collected across multiple visits and generates summary features capturing patients' clinical status, disease progression, and follow-up characteristics.
+
+Feature engineering is performed separately depending on the prediction task (hep or death), using a dedicated pipeline implemented in apply_final_feature_engineering().
+
+**Longitudinal data processing**
+
+The first step consists of extracting relevant information from repeated measurements collected during patient follow-up. Several patient-level summary features are generated, including:
+
+Follow-up characteristics: number of available visits, last observed age, first and last available visits for each biomarker, and age differences between consecutive visits.
+Measurement availability: number of non-missing measurements for each longitudinal variable and average number of measurements per visit.
+Biomarker evolution: minimum, maximum, range, and mean differences between successive measurements.
+Longitudinal trends: percentage changes relative to baseline and individual biomarker progression slopes estimated using the robust Theil-Sen method.
+
+**Clinical and biological feature engineering**
+
+Additional clinically relevant features are derived from longitudinal laboratory measurements and clinical characteristics:
+
+Metabolic syndrome proxy score: composite score based on BMI, fasting glucose, triglycerides, hypertension, type 2 diabetes, and dyslipidaemia.
+ALT/AST ratio: calculation of the ALT-to-AST ratio at each available visit.
+Fibrosis staging: conversion of continuous FibroTest scores into categorical fibrosis stages (F0–F4), followed by the extraction of maximum fibrosis stage and advanced fibrosis indicators.
+Cirrhosis proxy score: composite score based on bilirubin, platelet count, GGT, liver stiffness, and FibroTest measurements.
+
+**Task-specific feature engineering**
+
+Two distinct feature-engineering strategies are implemented according to the prediction objective:
+
+Hepatic events prediction (hep): focuses on clinical and biological status, fibrosis severity, cirrhosis-related indicators, and the most recent available biomarker measurements. The original longitudinal biomarker columns are retained during the extraction of the latest measurements.
+Mortality prediction (death): incorporates additional longitudinal information, including the number of available measurements, percentage changes from baseline, Theil-Sen progression slopes, and the number of examination intervals shorter than or equal to two years. The original longitudinal biomarker columns are removed after extracting the most recent available measurements.
+
+**Final preprocessing**
+
+Finally, categorical variables, including gender, type 2 diabetes, hypertension, dyslipidaemia, and bariatric surgery, are converted into binary dummy variables using one-hot encoding (drop_first=True).
+
+The resulting datasets contain engineered patient-level features tailored to each prediction task and are ready for subsequent modelling.
+
+The complete preprocessing workflow is implemented in *See [`preprocessing.py`](here).*
+
+```
+flowchart TD
+    A["Raw longitudinal clinical and biological data"] --> B["Input DataFrame"]
+    B --> C["Patient-level summary features"]
+    C --> D{"Prediction task"}
+
+    D -->|Hepatic events| H1["Clinical and longitudinal features"]
+    D -->|Mortality| M1["Longitudinal measurement counts"]
+
+    H1 --> H2["First and last biomarker visits"]
+    H2 --> H3["Age differences between visits"]
+    H3 --> H4["Metabolic syndrome proxy score"]
+    H4 --> H5["ALT/AST ratios"]
+    H5 --> H6["Fibrosis staging from FibroTest"]
+    H6 --> H7["Cirrhosis proxy score"]
+    H7 --> H8["Last observed age"]
+    H8 --> H9["Extract most recent biomarker measurements"]
+
+    M1 --> M2["Percentage changes from baseline"]
+    M2 --> M3["Theil-Sen individual progression slopes"]
+    M3 --> M4["First and last biomarker visits"]
+    M4 --> M5["Age differences between visits"]
+    M5 --> M6["Examination intervals within 2 years"]
+    M6 --> M7["Fibrosis staging from FibroTest"]
+    M7 --> M8["Cirrhosis proxy score"]
+    M8 --> M9["Last observed age"]
+    M9 --> M10["Extract most recent biomarker measurements"]
+
+    H9 --> E["Categorical variable encoding"]
+    M10 --> E
+
+    E --> F["Final feature-engineered dataset"]
+    F --> G["Downstream predictive modelling"]
+
+    classDef input fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
+    classDef process fill:#f1f5f9,stroke:#64748b,color:#1e293b
+    classDef decision fill:#fef3c7,stroke:#d97706,color:#78350f
+    classDef output fill:#dcfce7,stroke:#16a34a,color:#14532d
+
+    class A,B input
+    class C,H1,H2,H3,H4,H5,H6,H7,H8,H9,M1,M2,M3,M4,M5,M6,M7,M8,M9,M10,E process
+    class D decision
+    class F,G output
+```
+
+### Training 
 
 To train our model,
 
@@ -88,4 +174,10 @@ It also applies our customized preprocessing (new features, change scores, summa
 
 
 
+
+
+## Results
+
+Hepatic nested CV: 0.8664 ± 0.0986
+Death nested CV:   0.9473 ± 0.0266
 
