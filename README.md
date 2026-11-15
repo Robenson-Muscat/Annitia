@@ -115,9 +115,9 @@ Finally, categorical variables, including gender, type 2 diabetes, hypertension,
 
 The resulting datasets contain engineered patient-level features tailored to each prediction task and are ready for subsequent modelling.
 
-The complete preprocessing workflow is implemented in *See [`preprocessing.py`](here).*
+The complete preprocessing workflow is implemented in *[`preprocessing.py`](here).*
 
-```
+```mermaid
 flowchart TD
     A["Raw longitudinal clinical and biological data"] --> B["Input DataFrame"]
     B --> C["Patient-level summary features"]
