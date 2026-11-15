@@ -42,12 +42,56 @@ The diagnostic performance of NITs correlates with histological stages of fibros
 
 The goal of the ANNITIA challenge is to use clinical data and non-invasive tests (NITs), such as FibroScan, FibroTest, and Aixplorer, to develop a score able to predict the occurrence of major liver events or death during the follow-up of patients with MASLD.
 
+Model submissions are evaluated based on survival prediction performance using the Concordance Index (C-index). This metric assesses the model's ability to correctly rank patients according to their predicted risk relative to their observed event times.
+
+Two clinical endpoints are considered:
+
+Death event: weighted at 0.3 (30%).
+Hepatic event: weighted at 0.7 (70%).
+
+The final evaluation score is calculated as the weighted average of the two endpoint-specific C-indices:
+
+Final Score=0.3×Cdeath+0.7×Chepatic
+
+For each endpoint, the model must generate an individual risk score for every patient. These scores are evaluated against the observed survival outcomes and event times using the concordance_index_censored function from the scikit-survival library. A higher C-index indicates better discrimination between patients, reflecting a greater ability to correctly rank individuals according to their risk of experiencing the event.
+
 The competitors will have access to data from 1,676 synthetic patients. The dataset includes:
 
 Clinical data: age at baseline, gender, BMI (during follow-up), and medical history (diabetes, hypertension, dyslipidemia and bariatric surgery).
 Biochemical parameters (from baseline to follow-up): repeated measurements of ALT, AST, GGT, bilirubin, platelets, glycemia, triglycerides, total-cholesterol.
 Biomarkers (NIT, from baseline to follow-up): repeated measurements of FibroTest, FibroScan and Aixplorer.
 Outcomes: occurrence of major liver events and all-cause mortality.
+
+
+flowchart TD
+    A["Raw longitudinal data"] --> B["Preprocessing and feature engineering"]
+
+    B --> C{"Prediction task"}
+
+    C -->|Death| D["Death prediction model"]
+    C -->|Hepatic event| E["Hepatic event prediction model"]
+
+    D --> F["Patient-level death risk scores"]
+    E --> G["Patient-level hepatic risk scores"]
+
+    F --> H["C-index death (0.3)"]
+    G --> I["C-index hepatic (0.7)"]
+
+    H --> J["Weighted evaluation"]
+    I --> J
+
+    J --> K["Final Score = 0.3 × C-index death + 0.7 × C-index hepatic"]
+
+    classDef input fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
+    classDef model fill:#f1f5f9,stroke:#64748b,color:#1e293b
+    classDef evaluation fill:#fef3c7,stroke:#d97706,color:#78350f
+    classDef output fill:#dcfce7,stroke:#16a34a,color:#14532d
+
+    class A,B input
+    class D,E,F,G model
+    class H,I,J evaluation
+    class K output
+
 
 
 ### Building a comprehensive dataset
@@ -76,14 +120,14 @@ pip install -r requirements.txt
 
 Please check out the [following page](https://app.trustii.io/datasets/1551) to download data. 
 
+
 ## Method
 
 ### Preprocessing
 
 The preprocessing pipeline is designed to transform longitudinal clinical and biological data into patient-level features suitable for downstream predictive modelling. It accounts for repeated measurements collected across multiple visits and generates summary features capturing patients' clinical status, disease progression, and follow-up characteristics.
 
-Feature engineering is performed separately depending on the prediction task (hep or death), using a dedicated pipeline implemented in apply_final_feature_engineering().
-
+Feature engineering is performed separately depending on the prediction task (hepatic or death). 
 **Longitudinal data processing**
 
 The first step consists of extracting relevant information from repeated measurements collected during patient follow-up. Several patient-level summary features are generated, including:
@@ -107,13 +151,12 @@ Cirrhosis proxy score: composite score based on bilirubin, platelet count, GGT, 
 Two distinct feature-engineering strategies are implemented according to the prediction objective:
 
 Hepatic events prediction (hep): focuses on clinical and biological status, fibrosis severity, cirrhosis-related indicators, and the most recent available biomarker measurements. The original longitudinal biomarker columns are retained during the extraction of the latest measurements.
+
 Mortality prediction (death): incorporates additional longitudinal information, including the number of available measurements, percentage changes from baseline, Theil-Sen progression slopes, and the number of examination intervals shorter than or equal to two years. The original longitudinal biomarker columns are removed after extracting the most recent available measurements.
 
 **Final preprocessing**
 
-Finally, categorical variables, including gender, type 2 diabetes, hypertension, dyslipidaemia, and bariatric surgery, are converted into binary dummy variables using one-hot encoding (drop_first=True).
-
-The resulting datasets contain engineered patient-level features tailored to each prediction task and are ready for subsequent modelling.
+Finally, categorical variables, including gender, type 2 diabetes, hypertension, dyslipidaemia, and bariatric surgery, are converted into binary dummy variables using one-hot encoding (drop_first=True). The resulting datasets contain engineered patient-level features tailored to each prediction task and are ready for subsequent modelling.
 
 The complete preprocessing workflow is implemented in *[`preprocessing.py`](here).*
 
@@ -170,8 +213,9 @@ To train our model,
 python train.py
 ```
 
-It also applies our customized preprocessing (new features, change scores, summary metrics) and then trains a RandomSurvivalForest using cross-validation.
+It applies our customized preprocessing (new features, change scores, summary metrics) , then trains and validate a RandomSurvivalForest using a robust validation strategy : nested cross-validation.
 
+It prints ..., submits..
 
 
 
