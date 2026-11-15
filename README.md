@@ -166,6 +166,7 @@ For each endpoint, survival targets are constructed using the observed event ind
 - Patients without an observed event: survival time corresponds to the last observed age minus baseline age. These patients are treated as right-censored observations.
 
 Patients with missing event indicators, missing event times for observed events, or invalid follow-up durations are excluded from the corresponding analysis.
+
 **3. Feature selection and preprocessing**
 
 Before model training, the feature matrices are constructed by removing: Longitudinal age variables (Age_vX) to prevent information leakage.
@@ -175,6 +176,7 @@ A dedicated preprocessing pipeline is then applied independently within each cro
 Importantly, feature selection and imputation are fitted exclusively on the training portion of each fold, preventing information from validation observations from influencing preprocessing.
 
 **4. Model evaluation**
+
 Model performance and hyperparameter selection are assessed using a nested cross-validation strategy.
 The optimized model from each outer fold is evaluated on its corresponding held-out validation fold.
 The evaluation metric is the Concordance Index (C-index), calculated using concordance_index_censored from scikit-survival.
