@@ -44,68 +44,27 @@ The goal of the ANNITIA challenge is to use clinical data and non-invasive tests
 
 Model submissions are evaluated based on survival prediction performance using the Concordance Index (C-index). This metric assesses the model's ability to correctly rank patients according to their predicted risk relative to their observed event times.
 
-Two clinical endpoints are considered:
-
-Death event: weighted at 0.3 (30%).
-Hepatic event: weighted at 0.7 (70%).
-
 The final evaluation score is calculated as the weighted average of the two endpoint-specific C-indices:
 
-Final Score=0.3×Cdeath+0.7×Chepatic
+**Final Score=0.3×C-index death + 0.7×C-index hepatic**
 
 For each endpoint, the model must generate an individual risk score for every patient. These scores are evaluated against the observed survival outcomes and event times using the concordance_index_censored function from the scikit-survival library. A higher C-index indicates better discrimination between patients, reflecting a greater ability to correctly rank individuals according to their risk of experiencing the event.
 
-The competitors will have access to data from 1,676 synthetic patients. The dataset includes:
 
-Clinical data: age at baseline, gender, BMI (during follow-up), and medical history (diabetes, hypertension, dyslipidemia and bariatric surgery).
-Biochemical parameters (from baseline to follow-up): repeated measurements of ALT, AST, GGT, bilirubin, platelets, glycemia, triglycerides, total-cholesterol.
-Biomarkers (NIT, from baseline to follow-up): repeated measurements of FibroTest, FibroScan and Aixplorer.
-Outcomes: occurrence of major liver events and all-cause mortality.
-
-```mermaid
-flowchart TD
-    A["Raw longitudinal data"] --> B["Preprocessing and feature engineering"]
-
-    B --> C{"Prediction task"}
-
-    C -->|Death| D["Death prediction model"]
-    C -->|Hepatic event| E["Hepatic event prediction model"]
-
-    D --> F["Patient-level death risk scores"]
-    E --> G["Patient-level hepatic risk scores"]
-
-    F --> H["C-index death (0.3)"]
-    G --> I["C-index hepatic (0.7)"]
-
-    H --> J["Weighted evaluation"]
-    I --> J
-
-    J --> K["Final Score = 0.3 × C-index death + 0.7 × C-index hepatic"]
-
-    classDef input fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
-    classDef model fill:#f1f5f9,stroke:#64748b,color:#1e293b
-    classDef evaluation fill:#fef3c7,stroke:#d97706,color:#78350f
-    classDef output fill:#dcfce7,stroke:#16a34a,color:#14532d
-
-    class A,B input
-    class D,E,F,G model
-    class H,I,J evaluation
-    class K output
-```
-
-
-### Building a comprehensive dataset
+## Data
 
 A critical component of this challenge is the creation of a large dataset of patients with MASLD including a long-term follow-up (from 2001 to 2025) containing repeated measurements of different NITs over time.
 
 The ANNITIA team has explored the clinical records of thousands of patients (who allowed it) at Pitié-Salpêtrière Hospital in Paris. In order to protect patients from any reidentification risks, synthetic data were created from the original clinical database. Thus, the following dataset features for each synthetical patient are available:
 
-22 data points describing the patient over time of each examen performed, with the corresponding age, BMI and biochemical parameters.
-Up to 3 NITs usually measured for assessing fibrosis progression.
-One outcome column summarizing the liver-related events (composite endpoint) occurred by the patient during the follow-up and the time of the diagnosis: to be predicted.
-One outcome column informing the death status (all-cause mortality): to be predicted.
+1,676 synthetic patients
+Clinical data: age at baseline, gender, BMI (during follow-up), and medical history (diabetes, hypertension, dyslipidemia and bariatric surgery).
+Biochemical parameters (from baseline to follow-up): repeated measurements of ALT, AST, GGT, bilirubin, platelets, glycemia, triglycerides, total-cholesterol.
+Biomarkers (NIT, from baseline to follow-up): repeated measurements of FibroTest, FibroScan and Aixplorer.
+Outcomes: occurrence of major liver events and all-cause mortality.
+22 data points describing the patient over time of each examen performed, with the corresponding age, BMI and biochemical parameters. Up to 3 NITs usually measured for assessing fibrosis progression.
 
-This extended dataset provides an ideal foundation for training and evaluating machine learning models, offering participants a great opportunity to work with synthetic data generated from real-world medical data.
+Please check out the [following page](https://app.trustii.io/datasets/1551) to download data. 
 
 
 ## Requirements
@@ -116,9 +75,6 @@ source annitia/bin/activate
 pip install -r requirements.txt
 ```
 
-## Data
-
-Please check out the [following page](https://app.trustii.io/datasets/1551) to download data. 
 
 
 ## Method
@@ -128,6 +84,7 @@ Please check out the [following page](https://app.trustii.io/datasets/1551) to d
 The preprocessing pipeline is designed to transform longitudinal clinical and biological data into patient-level features suitable for downstream predictive modelling. It accounts for repeated measurements collected across multiple visits and generates summary features capturing patients' clinical status, disease progression, and follow-up characteristics.
 
 Feature engineering is performed separately depending on the prediction task (hepatic or death). 
+
 **Longitudinal data processing**
 
 The first step consists of extracting relevant information from repeated measurements collected during patient follow-up. Several patient-level summary features are generated, including:
@@ -156,56 +113,121 @@ Mortality prediction (death): incorporates additional longitudinal information, 
 
 **Final preprocessing**
 
-Finally, categorical variables, including gender, type 2 diabetes, hypertension, dyslipidaemia, and bariatric surgery, are converted into binary dummy variables using one-hot encoding (drop_first=True). The resulting datasets contain engineered patient-level features tailored to each prediction task and are ready for subsequent modelling.
+Finally, categorical variables, including gender, type 2 diabetes, hypertension, dyslipidaemia, and bariatric surgery, are converted into binary dummy variables using one-hot encoding. The resulting datasets contain engineered patient-level features tailored to each prediction task and are ready for subsequent modelling.
 
 The complete preprocessing workflow is implemented in *[`preprocessing.py`](here).*
 
 ```mermaid
 flowchart TD
-    A["Raw longitudinal clinical and biological data"] --> B["Input DataFrame"]
-    B --> C["Patient-level summary features"]
-    C --> D{"Prediction task"}
+    A["Raw longitudinal clinical and biological data"] --> B["Preprocessing and feature engineering"]
 
-    D -->|Hepatic events| H1["Clinical and longitudinal features"]
-    D -->|Mortality| M1["Longitudinal measurement counts"]
+    B --> C{"Prediction task"}
 
-    H1 --> H2["First and last biomarker visits"]
-    H2 --> H3["Age differences between visits"]
-    H3 --> H4["Metabolic syndrome proxy score"]
-    H4 --> H5["ALT/AST ratios"]
-    H5 --> H6["Fibrosis staging from FibroTest"]
-    H6 --> H7["Cirrhosis proxy score"]
-    H7 --> H8["Last observed age"]
-    H8 --> H9["Extract most recent biomarker measurements"]
+    C -->|Death| D["Death prediction model"]
+    C -->|Hepatic event| E["Hepatic event prediction model"]
 
-    M1 --> M2["Percentage changes from baseline"]
-    M2 --> M3["Theil-Sen individual progression slopes"]
-    M3 --> M4["First and last biomarker visits"]
-    M4 --> M5["Age differences between visits"]
-    M5 --> M6["Examination intervals within 2 years"]
-    M6 --> M7["Fibrosis staging from FibroTest"]
-    M7 --> M8["Cirrhosis proxy score"]
-    M8 --> M9["Last observed age"]
-    M9 --> M10["Extract most recent biomarker measurements"]
+    D --> F["Patient-level death risk scores"]
+    E --> G["Patient-level hepatic risk scores"]
 
-    H9 --> E["Categorical variable encoding"]
-    M10 --> E
+    F --> H["C-index death "]
+    G --> I["C-index hepatic "]
 
-    E --> F["Final feature-engineered dataset"]
-    F --> G["Downstream predictive modelling"]
+    H --> J["Weighted evaluation"]
+    I --> J
+
+    J --> K["Final Score = 0.3 × C-index death + 0.7 × C-index hepatic"]
 
     classDef input fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
-    classDef process fill:#f1f5f9,stroke:#64748b,color:#1e293b
-    classDef decision fill:#fef3c7,stroke:#d97706,color:#78350f
+    classDef model fill:#f1f5f9,stroke:#64748b,color:#1e293b
+    classDef evaluation fill:#fef3c7,stroke:#d97706,color:#78350f
     classDef output fill:#dcfce7,stroke:#16a34a,color:#14532d
 
     class A,B input
-    class C,H1,H2,H3,H4,H5,H6,H7,H8,H9,M1,M2,M3,M4,M5,M6,M7,M8,M9,M10,E process
-    class D decision
-    class F,G output
+    class D,E,F,G model
+    class H,I,J evaluation
+    class K output
 ```
+### Training and validation
 
-### Training 
+1. Model architecture
+
+Two independent survival prediction models are developed to predict the risk of experiencing the two clinical endpoints. Both models are based on the Random Survival Forest (RSF) algorithm implemented in `scikit-survival`. Each model is trained independently using its corresponding endpoint-specific feature set and survival targets.
+
+2. Survival target construction
+
+For each endpoint, survival targets are constructed using the observed event indicator and event time. The follow-up duration is calculated relative to the patient's baseline age (Age_v1):
+
+Patients experiencing an event: survival time corresponds to the age at event occurrence minus baseline age.
+Patients without an observed event: survival time corresponds to the last observed age minus baseline age. These patients are treated as right-censored observations.
+
+Patients with missing event indicators, missing event times for observed events, or invalid follow-up durations are excluded from the corresponding analysis. Zero survival times are replaced with a small positive value to ensure compatibility with survival modelling requirements.
+
+3. Feature selection and preprocessing
+
+Before model training, the feature matrices are constructed by removing:
+
+Patient identifiers.
+Target variables and event-related information.
+Longitudinal age variables (Age_vX).
+The last_observed_age variable, to prevent information leakage.
+
+A dedicated preprocessing pipeline is then applied independently within each cross-validation training fold:
+
+Missing-rate filtering: features with more than 50% missing values are removed.
+Median imputation: remaining missing values are replaced using the median of each feature.
+
+Importantly, feature selection and imputation are fitted exclusively on the training portion of each fold, preventing information from validation observations from influencing preprocessing.
+
+4. Nested cross-validation and hyperparameter optimization
+
+Model performance and hyperparameter selection are assessed using a nested cross-validation strategy.
+
+The procedure consists of two levels:
+
+Outer cross-validation (4 folds)
+
+The dataset is divided into four folds using shuffled K-fold splitting with a fixed random seed for reproducibility.
+
+For each iteration:
+
+Three folds are used for model development and hyperparameter optimization.
+The remaining fold is kept untouched for independent validation.
+The optimized model is evaluated on this outer validation fold using the Concordance Index (C-index).
+This procedure provides an estimate of model generalization performance while limiting optimistic bias associated with hyperparameter selection.
+
+Inner cross-validation (3 folds)
+
+Within each outer training set, a 3-fold cross-validation procedure is used to optimize the Random Survival Forest hyperparameters.
+Hyperparameter optimization is performed using RandomizedSearchCV, with 30 randomly sampled parameter combinations.
+The best configuration is selected based on the mean inner cross-validation C-index.
+
+5. Model evaluation
+
+The optimized model from each outer fold is evaluated on its corresponding held-out validation fold.
+The evaluation metric is the Concordance Index (C-index), calculated using concordance_index_censored from scikit-survival.
+
+For each endpoint, the following results are reported:
+
+C-index for each outer validation fold.
+Mean outer cross-validation C-index.
+Standard deviation across the four outer folds.
+Best hyperparameters selected in each fold.
+
+Additionally, feature selection stability is assessed by recording how frequently each feature is retained across the four outer training folds. This provides an indication of the consistency of the missing-rate filtering procedure.
+
+
+6. Final model training
+
+Following nested cross-validation, two final Random Survival Forest models are trained independently for the hepatic and death endpoints.
+For each endpoint, hyperparameter optimization is repeated using 3-fold cross-validation on the complete available training dataset.
+The best-performing configuration is then automatically refitted on the entire endpoint-specific training dataset using RandomizedSearchCV(refit=True).
+These final models are subsequently used to generate predictions for the held-out validation/test dataset.
+
+7. Risk prediction and submission generation
+
+The trained models generate an individual risk score for each patient and each clinical endpoint.
+The resulting predictions are saved in a CSV file.
+
 
 To train our model,
 
@@ -213,15 +235,14 @@ To train our model,
 python train.py
 ```
 
-It applies our customized preprocessing (new features, change scores, summary metrics) , then trains and validate a RandomSurvivalForest using a robust validation strategy : nested cross-validation.
-
-It prints ..., submits..
+It applies our customized preprocessing , then trains and validate a RandomSurvivalForest using a robust validation strategy : nested cross-validation.
 
 
-
+Ce que ca print et ce que ca submit 
 
 ## Results
 
 Hepatic nested CV: 0.8664 ± 0.0986
 Death nested CV:   0.9473 ± 0.0266
+
 
