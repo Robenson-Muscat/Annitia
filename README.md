@@ -93,19 +93,20 @@ Feature engineering is performed separately depending on the prediction task (he
 
 The first step consists of extracting relevant information from repeated measurements collected during patient follow-up. Several patient-level summary features are generated, including:
 
-Follow-up characteristics: number of available visits, last observed age, first and last available visits for each biomarker, and age differences between consecutive visits.
-Measurement availability: number of non-missing measurements for each longitudinal variable and average number of measurements per visit.
-Biomarker evolution: minimum, maximum, range, and mean differences between successive measurements.
-Longitudinal trends: percentage changes relative to baseline and individual biomarker progression slopes estimated using the robust Theil-Sen method.
+
+- Follow-up characteristics: number of available visits, last observed age, first and last available visits for each biomarker, and age differences between consecutive visits.
+- Measurement availability: number of non-missing measurements for each longitudinal variable and average number of measurements per visit.
+- Biomarker evolution: minimum, maximum, range, and mean differences between successive measurements.
+- Longitudinal trends: percentage changes relative to baseline and individual biomarker progression slopes estimated using the robust Theil-Sen method.
 
 **Clinical and biological feature engineering**
 
 Additional clinically relevant features are derived from longitudinal laboratory measurements and clinical characteristics:
 
-Metabolic syndrome proxy score: composite score based on BMI, fasting glucose, triglycerides, hypertension, type 2 diabetes, and dyslipidaemia.
-ALT/AST ratio: calculation of the ALT-to-AST ratio at each available visit.
-Fibrosis staging: conversion of continuous FibroTest scores into categorical fibrosis stages (F0–F4), followed by the extraction of maximum fibrosis stage and advanced fibrosis indicators.
-Cirrhosis proxy score: composite score based on bilirubin, platelet count, GGT, liver stiffness, and FibroTest measurements.
+Metabolic syndrome proxy score: Composite score based on BMI, fasting glucose, triglycerides, hypertension, type 2 diabetes, and dyslipidaemia.
+ALT/AST ratio: Calculation of the ALT-to-AST ratio at each available visit.
+Fibrosis staging: Conversion of continuous FibroTest scores into categorical fibrosis stages (F0–F4), followed by the extraction of maximum fibrosis stage and advanced fibrosis indicators.
+Cirrhosis proxy score: Composite score based on bilirubin, platelet count, GGT, liver stiffness, and FibroTest measurements.
 
 **Task-specific feature engineering**
 
