@@ -150,7 +150,7 @@ flowchart TD
 ```
 ### Training and validation
 
-Look *[here](`docs/train.md`)* for our method.
+Look *[`docs/train.md`](here)* for our method.
 
 
 
