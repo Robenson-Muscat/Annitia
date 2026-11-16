@@ -22,15 +22,13 @@ Importantly, feature selection and imputation are fitted exclusively on the trai
 
 **4. Nested cross-validation and hyperparameter optimization**
 
-Model performance and hyperparameter selection are assessed using a nested cross-validation strategy.
+Model performance and hyperparameter selection are assessed using a **nested cross-validation strategy**.
 
 The procedure consists of two levels: 
 
 **Outer cross-validation (4 folds)**
 
-The dataset is divided into four folds using shuffled K-fold splitting with a fixed random seed.
-
-For each iteration:
+The dataset is divided into four folds using shuffled K-fold splitting with a fixed random seed. For each iteration:
 - Three folds are used for model development and hyperparameter optimization.
 - The remaining fold is kept untouched for independent validation.
 - The optimized model is evaluated on this outer validation fold using the Concordance Index (C-index).
@@ -40,13 +38,11 @@ This procedure provides an estimate of model generalization performance while li
 **Inner cross-validation (3 folds)**
 
 Within each outer training set, a 3-fold cross-validation procedure is used to optimize the Random Survival Forest hyperparameters.
-
 Hyperparameter optimization is performed using RandomizedSearchCV, with 30 randomly sampled parameter combinations. The best configuration is selected based on the mean inner cross-validation C-index.
 
 
 **5. Model evaluation**
 
-Model performance and hyperparameter selection are assessed using a **nested cross-validation strategy**.
 The optimized model from each outer fold is evaluated on its corresponding held-out validation fold.
 The evaluation metric is the Concordance Index (C-index), calculated using concordance_index_censored.
 
