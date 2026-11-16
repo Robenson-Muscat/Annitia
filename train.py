@@ -1,36 +1,31 @@
-import re
 import warnings
 
 import numpy as np
 import pandas as pd
-#import skrub
-import sksurv
-import umap
 
-from sklearn.base import BaseEstimator
-from sklearn.feature_selection import RFECV
-from sklearn.experimental import enable_iterative_imputer  # noqa: F401
-from sklearn.impute import IterativeImputer, SimpleImputer
-from sklearn.inspection import permutation_importance
-from sklearn.model_selection import GridSearchCV, KFold, RandomizedSearchCV
+from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.impute import SimpleImputer
+from sklearn.model_selection import KFold, RandomizedSearchCV
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
-from sksurv.ensemble import GradientBoostingSurvivalAnalysis, RandomSurvivalForest
-from sksurv.linear_model import CoxnetSurvivalAnalysis
+from sklearn.ensemble import HistGradientBoostingRegressor
+from sklearn.linear_model import BayesianRidge
+from sksurv.ensemble import RandomSurvivalForest
 from sksurv.metrics import concordance_index_censored
 from sksurv.util import Surv
+
+from preprocessing import apply_final_feature_engineering
 
 warnings.filterwarnings("ignore")
 
 
-from preprocessing import apply_final_feature_engineering
-
+# ============================================================
+# CONFIGURATION
+# ============================================================
 
 TRAIN_PATH = "data/processed_wide/train.csv"
 TEST_PATH = "data/processed_wide/val_test.csv"
 OUTPUT_PATH = "submission_annitia.csv"
 
-# Columns that must not be used as features
 TARGET_COLS = [
     "evenements_hepatiques_majeurs",
     "evenements_hepatiques_age_occur",
@@ -40,71 +35,95 @@ TARGET_COLS = [
 
 ID_COLS = ["patient_id_anon", "trustii_id"]
 
-MAX_MISSING_RATE = 0.50
+MAX_MISSING_RATE = 0.5
 
-BIOMARKERS = [
-    "BMI",
-    "alt",
-    "ast",
-    "bilirubin",
-    "chol",
-    "ggt",
-    "gluc_fast",
-    "plt",
-    "triglyc",
-    "aixp_aix_result_BM_3",
-    "fibrotest_BM_2",
-    "fibs_stiffness_med_BM_1",
-]
+RANDOM_STATE = 26
+
+OUTER_SPLITS = 4
+INNER_SPLITS = 3
+
+N_ITER_SEARCH = 30
+
+N_JOBS = -1
 
 
+# ============================================================
+# FEATURE SELECTION
+# ============================================================
 
-def make_rsf_pipeline():
-    """Random Survival Forest with regularization."""
-    return Pipeline(
-        [
-            ("imp", SimpleImputer(strategy="median")),
-            #("imp", IterativeImputer()),
-            (
-                "rsf",
-                RandomSurvivalForest(
-                    n_estimators=100,
-                    min_samples_leaf=20,
-                    min_samples_split=40,
-                    max_features="sqrt",
-                    n_jobs=1,
-                    random_state=26,
-                ),
-            ),
-        ]
-    )
+class MissingRateFilter(BaseEstimator, TransformerMixin):
+    """
+    Remove features with a missing rate above the threshold.
+
+    The filter is fitted independently inside each CV training fold.
+    """
+
+    def __init__(self, threshold=0.50):
+        self.threshold = threshold
+
+    def fit(self, X, y=None):
+        X = pd.DataFrame(X).copy()
+
+        self.feature_names_in_ = np.asarray(X.columns, dtype=object)
+
+        missing_rates = X.isna().mean()
+
+        self.selected_features_ = missing_rates[missing_rates <= self.threshold].index.tolist()
+
+        # Safety: retain at least one feature
+        if len(self.selected_features_) == 0:
+            self.selected_features_ = [missing_rates.idxmin()]
+
+        return self
+
+    def transform(self, X):
+        X = pd.DataFrame(X).copy()
+
+        return X.reindex(columns=self.selected_features_, fill_value=np.nan)
+
+    def get_feature_names_out(self, input_features=None):
+        return np.asarray(self.selected_features_, dtype=object)
 
 
-def cv_rsf(X, y, n_splits=5, random_state=26):
-    """Cross-validated concordance index for a survival pipeline."""
-    cv = KFold(n_splits=n_splits, shuffle=True, random_state=random_state)
-    scores = []
+class MissingRateFilter(BaseEstimator, TransformerMixin):
 
-    for train_idx, test_idx in cv.split(X):
-        X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
-        y_train, y_test = y[train_idx], y[test_idx]
+    def __init__(self, threshold=0.50):
+        self.threshold = threshold
 
-        model = make_rsf_pipeline()
-        model.fit(X_train, y_train)
+    def fit(self, X, y=None):
 
-        preds = model.predict(X_test)
+        X = pd.DataFrame(X).copy()
 
-        ci = concordance_index_censored(
-            y_test[y.dtype.names[0]],  # event
-            y_test[y.dtype.names[1]],  # time
-            preds,
-        )[0]
+        self.feature_names_in_ = np.asarray(X.columns, dtype=object)
 
-        scores.append(ci)
+        missing_rates = X.isna().mean()
 
-    return np.mean(scores), np.std(scores)
-    
+        self.selected_features_ = missing_rates[
+            (missing_rates <= self.threshold) &
+            (missing_rates < 1.0)
+        ].index.tolist()
 
+        if len(self.selected_features_) == 0:
+            raise ValueError("No features available after missing-rate filtering.")
+
+        return self
+
+    def transform(self, X):
+
+        X = pd.DataFrame(X).copy()
+
+        X = X.reindex(columns=self.selected_features_)
+
+        return X
+
+    def get_feature_names_out(self, input_features=None):
+
+        return np.asarray(self.selected_features_, dtype=object)
+
+
+# ============================================================
+# SURVIVAL TARGET CONSTRUCTION
+# ============================================================
 
 def prepare_survival_targets_robust(
     df: pd.DataFrame,
@@ -115,88 +134,70 @@ def prepare_survival_targets_robust(
     drop_nonpositive_times: bool = True,
     return_report: bool = False,
 ):
-    """
-    Build a sksurv-compatible structured array for one survival endpoint.
 
-    Rules:
-      - missing event -> drop row
-      - event == 1 and event time missing -> drop row
-      - event == 0 -> censored at last_observed_age - Age_v1
-      - negative times -> drop row if drop_nonpositive_times=True
-      - zero times -> clamped to min_time
-    """
     df = df.copy()
 
     if outcome == "hepatic":
+
         event_col = "evenements_hepatiques_majeurs"
         time_col = "evenements_hepatiques_age_occur"
         event_name = "Hepatic_event"
+
     elif outcome == "death":
+
         event_col = "death"
         time_col = "death_age_occur"
         event_name = "Death"
-    else:
-        raise ValueError(f"outcome must be 'hepatic' or 'death', got {outcome!r}")
 
-    required_cols = [event_col, time_col, baseline_col, last_observed_col]
+    else:
+        raise ValueError(f"Unknown outcome: {outcome}")
+
+    required_cols = [
+        event_col,
+        time_col,
+        baseline_col,
+        last_observed_col,]
+
     missing_required = [c for c in required_cols if c not in df.columns]
+
     if missing_required:
         raise ValueError(f"Missing required columns: {missing_required}")
 
-    n0 = len(df)
+    n_initial = len(df)
 
-    # Track raw inconsistencies before filtering
-    mask_negative_followup = (
-        df[last_observed_col].notna()
-        & df[baseline_col].notna()
-        & (df[last_observed_col] - df[baseline_col] < 0)
-    )
+    # Event indicator must be known
+    df = df.loc[df[event_col].notna()].copy()
 
-    mask_neg_censor = (
-        (df[event_col] == 0)
-        & df[last_observed_col].notna()
-        & df[baseline_col].notna()
-        & (df[last_observed_col] - df[baseline_col] < 0)
-    )
-
-    mask_neg_event_time = (
-        (df[event_col] == 1)
-        & df[time_col].notna()
-        & df[baseline_col].notna()
-        & (df[time_col] - df[baseline_col] < 0)
-    )
-
-    # Keep only rows where the event indicator is known
-    mask_event_known = df[event_col].notna()
-    df = df.loc[mask_event_known].copy()
-
-    # For event rows, the event time must be known
-    is_event = df[event_col].astype(int) == 1
-    mask_event_time_known = (~is_event) | df[time_col].notna()
-    df = df.loc[mask_event_time_known].copy()
-
-    # Recompute event indicator after filtering
+    # Event time must be known for observed events
     is_event = df[event_col].astype(int) == 1
 
-    # Survival time
+    df = df.loc[
+        (~is_event) | df[time_col].notna()
+    ].copy()
+
+    is_event = df[event_col].astype(int) == 1
+
+    # Calculate follow-up time
     time_values = np.where(
         is_event,
         df[time_col] - df[baseline_col],
         df[last_observed_col] - df[baseline_col],
     ).astype(float)
 
-    # Remove invalid times
+    # Remove negative times
     if drop_nonpositive_times:
-        mask_valid_time = time_values >= 0
-        df = df.loc[mask_valid_time].copy()
-        time_values = time_values[mask_valid_time]
+        valid = time_values >= 0
+
+        df = df.loc[valid].copy()
+        time_values = time_values[valid]
 
     # Remove non-finite times
-    mask_finite = np.isfinite(time_values)
-    df = df.loc[mask_finite].copy()
-    time_values = time_values[mask_finite]
+    valid = np.isfinite(time_values)
 
-    # Clamp zeros / tiny values
+    df = df.loc[valid].copy()
+    time_values = time_values[valid]
+
+    # Avoid zero survival times
     time_values = np.maximum(time_values, min_time)
 
     is_event = (df[event_col].astype(int) == 1).to_numpy()
@@ -205,149 +206,460 @@ def prepare_survival_targets_robust(
         event=is_event.astype(bool),
         time=time_values,
         name_event=event_name,
-        name_time="Time_years",
-    )
+        name_time="Time_years")
+
+    df = df.reset_index(drop=True)
 
     if return_report:
+
         report = {
-            "n_initial": n0,
-            "n_after_event_known": int(mask_event_known.sum()),
-            "n_after_event_time_known": len(df),
+            "n_initial": n_initial,
             "n_final": len(df),
-            "dropped_total": n0 - len(df),
-            "n_negative_followup_raw": int(mask_negative_followup.sum()),
-            "n_negative_censor_time_raw": int(mask_neg_censor.sum()),
-            "n_negative_event_time_raw": int(mask_neg_event_time.sum()),
+            "dropped_total": n_initial - len(df),
+            "n_events": int(is_event.sum()),
             "outcome": outcome,
         }
-        return df.reset_index(drop=True), y, report
 
-    return df.reset_index(drop=True), y
+        return df, y, report
+
+    return df, y
 
 
+# ============================================================
+# FEATURE MATRIX
+# ============================================================
 
+def build_feature_matrix(df):
 
-def build_feature_matrix(df, keep_cols=None):
-    """
-    Build a numeric feature matrix, excluding:
-      - target columns
-      - ID columns
-      - Age_v* columns
-      - last_observed_age
-
-    If keep_cols is provided, only those columns are retained.
-    """
     age_v_cols = [c for c in df.columns if c.startswith("Age_v")]
+
     leakage_cols = ["last_observed_age"]
-    drop_cols = TARGET_COLS + ID_COLS + age_v_cols + leakage_cols
+
+    drop_cols = (
+        TARGET_COLS
+        + ID_COLS
+        + age_v_cols
+        + leakage_cols)
 
     X = df.drop(columns=[c for c in drop_cols if c in df.columns], errors="ignore")
+
     X = X.select_dtypes(include="number")
 
-    if keep_cols is not None:
-        keep_cols = [c for c in keep_cols if c in X.columns]
-        X = X[keep_cols]
-
-    return X
+    return X.astype("float32")
 
 
-def run_pipeline():
-    """
-    End-to-end training and prediction workflow.
+# ============================================================
+# RSF PIPELINE
+# ============================================================
 
-    Assumes apply_final_feature_engineering(df, task=...) is already defined.
-    """
+def make_rsf_pipeline():
+
+    return Pipeline(
+        steps=[
+            ("missing_filter", MissingRateFilter(threshold=MAX_MISSING_RATE)),
+
+            ("imputer", SimpleImputer(strategy="median")), 
+
+            ("rsf", RandomSurvivalForest(n_estimators=300, n_jobs=1, random_state=RANDOM_STATE)),
+        ])
+
+
+# ============================================================
+# HYPERPARAMETER SEARCH
+# ============================================================
+
+def get_rsf_param_distributions():
+
+    return {
+        "rsf__n_estimators": [
+            200,
+            300,
+            500,
+        ],
+
+        "rsf__min_samples_leaf": [
+            5,
+            10,
+            15,
+            20,
+            30,
+        ],
+
+        "rsf__min_samples_split": [
+            10,
+            20,
+            30,
+            #40,
+            60,
+        ],
+
+        "rsf__max_features": [
+            "sqrt",
+            "log2",
+            0.3,
+            #0.5,
+            #0.7,
+        ],
+
+        "rsf__max_depth": [
+            None,
+            5,
+            10,
+            15,
+            20,
+        ],
+
+        "rsf__max_leaf_nodes": [
+            None,
+            10,
+            20,
+            40,
+        ],
+    }
+
+
+# ============================================================
+# SURVIVAL SCORING
+# ============================================================
+
+def survival_c_index(estimator, X, y):
+
+    predictions = estimator.predict(X)
+
+    event_name = y.dtype.names[0]
+    time_name = y.dtype.names[1]
+
+    ci = concordance_index_censored(y[event_name], y[time_name],predictions)[0]
+
+    return float(ci)
+
+
+# ============================================================
+# NESTED CROSS-VALIDATION
+# ============================================================
+
+def nested_cv_rsf(
+    X,
+    y,
+    outcome_name="Outcome",
+    outer_splits=OUTER_SPLITS,
+    inner_splits=INNER_SPLITS,
+):
+
+    outer_cv = KFold(n_splits=outer_splits, shuffle=True, random_state=RANDOM_STATE,)
+
+    outer_scores = []
+    best_params_per_fold = []
+
+    print("\n" + "=" * 65)
+    print(f"NESTED CROSS-VALIDATION: {outcome_name}")
+    print("=" * 65)
+
+    selected_features_per_fold = []
+
+    for fold, (train_idx, test_idx) in enumerate(outer_cv.split(X), start=1):
+
+        print(f"\nOuter fold {fold}/{outer_splits}" )
+
+        X_train = X.iloc[train_idx]
+        X_valid = X.iloc[test_idx]
+
+        y_train = y[train_idx]
+        y_valid = y[test_idx]
+
+        # Inner CV
+        inner_cv = KFold(n_splits=inner_splits, shuffle=True, random_state=RANDOM_STATE + fold,)
+
+        search = RandomizedSearchCV(
+            
+            estimator=make_rsf_pipeline(),
+
+            param_distributions=get_rsf_param_distributions(),
+
+            n_iter=N_ITER_SEARCH,
+
+            scoring=survival_c_index,
+
+            cv=inner_cv,
+
+            refit=True,
+
+            n_jobs=N_JOBS,
+
+            random_state=RANDOM_STATE + fold,
+
+            verbose=0,
+
+            error_score="raise",
+        )
+
+        # Hyperparameter optimization on outer training data only
+        search.fit(X_train, y_train)
+
+        # Best model fitted on the complete outer training fold
+        best_model = search.best_estimator_
+
+        selected_features = best_model.named_steps["missing_filter"].selected_features_
+        
+        print(f"Number of selected features: {len(selected_features)}")
+        selected_features_per_fold.append(set(selected_features))
+
+        # Evaluation on untouched outer validation fold
+        predictions = best_model.predict(X_valid)
+
+        ci = concordance_index_censored(
+            y_valid[y.dtype.names[0]],
+            y_valid[y.dtype.names[1]],
+            predictions,
+        )[0]
+
+        outer_scores.append(ci)
+
+        best_params_per_fold.append(search.best_params_)
+
+        print(f"Inner best C-index: {search.best_score_:.4f}")
+
+        print(f"Outer C-index:  {ci:.4f}")
+
+        print(f"Best parameters:  {search.best_params_}")
+
+
+    all_features = set.union(*selected_features_per_fold)
+
+    feature_stability = pd.DataFrame({
+        "feature": list(all_features),
+        "selection_frequency": [
+            sum(
+                feature in fold_features
+                for fold_features in selected_features_per_fold
+            ) / outer_splits
+            for feature in all_features
+        ]
+    })
+    
+    feature_stability = feature_stability.sort_values("selection_frequency", ascending=False)
+    
+    print("\nFeature selection stability:")
+    print(feature_stability.to_string(index=False))
+
+    mean_score = np.mean(outer_scores)
+    std_score = np.std(outer_scores, ddof=1)
+
+    print("\n" + "-" * 65)
+    print(f"{outcome_name} - NESTED CV RESULTS")
+    print("-" * 65)
+
+    print(f"Outer C-index: "
+        f"{mean_score:.4f} ± {std_score:.4f}")
+
+    print(f"Individual folds: "
+        f"{np.round(outer_scores, 4)}")
+
+    return {
+        "mean": mean_score,
+        "std": std_score,
+        "scores": outer_scores,
+        "best_params": best_params_per_fold,
+    }
+
+
+# ============================================================
+# FINAL MODEL TRAINING
+# ============================================================
+
+def train_final_rsf(X, y, outcome_name="Outcome"):
+
+    print("\n" + "=" * 65)
+    print(f"FINAL MODEL TRAINING: {outcome_name}")
+    print("=" * 65)
+
+    inner_cv = KFold(n_splits=INNER_SPLITS, shuffle=True, random_state=RANDOM_STATE)
+
+    search = RandomizedSearchCV(
+        estimator=make_rsf_pipeline(),
+
+        param_distributions=get_rsf_param_distributions(),
+
+        n_iter=N_ITER_SEARCH,
+
+        scoring=survival_c_index,
+
+        cv=inner_cv,
+
+        refit=True,
+
+        n_jobs=N_JOBS,
+
+        random_state=RANDOM_STATE,
+
+        verbose=1,
+
+        error_score="raise",
+    )
+
+    search.fit(X, y)
+
+    print(f"\nBest inner CV C-index: "
+        f"{search.best_score_:.4f}")
+
+    print(f"Best parameters: "
+        f"{search.best_params_}")
+
+    # Already refitted on all available training data
+    final_model = search.best_estimator_
+
+    return final_model, search
+
+
+# ============================================================
+# COMPLETE WORKFLOW
+# ============================================================
+
+def train_validation_pipeline():
+
+    # --------------------------------------------------------
+    # Load data
+    # --------------------------------------------------------
+
+    print("Loading datasets...")
+
     df = pd.read_csv(TRAIN_PATH)
     test_df = pd.read_csv(TEST_PATH)
 
+    # --------------------------------------------------------
     # Feature engineering
-    train_df_hep = apply_final_feature_engineering(df, task="hep")
-    train_df_death = apply_final_feature_engineering(df, task="death")
+    # --------------------------------------------------------
 
-    # Target processing
-    df_hep, y_hep = prepare_survival_targets_robust(train_df_hep, outcome="hepatic")
-    df_death, y_death = prepare_survival_targets_robust(train_df_death, outcome="death")
+    print("Feature engineering...")
 
+    train_df_hep = apply_final_feature_engineering(df.copy(),task="hep")
+    train_df_death = apply_final_feature_engineering(df.copy(), task="death")
+    
+    test_df_hep = apply_final_feature_engineering(test_df.copy(), task="hep")
+    test_df_death = apply_final_feature_engineering(test_df.copy(), task="death")
+
+    # --------------------------------------------------------
+    # Survival targets
+    # --------------------------------------------------------
+
+    print("Preparing survival targets...")
+
+    df_hep, y_hep, report_hep = prepare_survival_targets_robust(train_df_hep, outcome="hepatic", return_report=True,)
+    df_death, y_death, report_death = prepare_survival_targets_robust(train_df_death, outcome="death",return_report=True)
+
+    print("\nHepatic target report:")
+    print(report_hep)
+
+    print("\nDeath target report:")
+    print(report_death)
+
+    # --------------------------------------------------------
     # Feature matrices
-    X_hep_raw = build_feature_matrix(df_hep)
-    X_death_raw = build_feature_matrix(df_death)
+    # --------------------------------------------------------
 
-    print(f"Raw feature count: {X_hep_raw.shape[1]}")
+    X_hep = build_feature_matrix(df_hep)
+    X_death = build_feature_matrix(df_death)
 
-    # Missing-rate filter fitted on train and applied consistently
-    missing_rate_hep = X_hep_raw.isna().mean()
-    missing_rate_death = X_death_raw.isna().mean()
+    X_pred_hep = build_feature_matrix(test_df_hep)
+    X_pred_death = build_feature_matrix(test_df_death)
 
-    keep_hep = missing_rate_hep[missing_rate_hep <= MAX_MISSING_RATE].index.tolist()
-    keep_death = missing_rate_death[missing_rate_death <= MAX_MISSING_RATE].index.tolist()
+    # Align train and test columns.
+    # Missing columns are filled with NaN and handled by
+    # the imputer inside the pipeline.
+    X_pred_hep = X_pred_hep.reindex(
+        columns=X_hep.columns)
 
-    X_hep_aln = X_hep_raw[keep_hep]
-    X_death_aln = X_death_raw[keep_death]
+    X_pred_death = X_pred_death.reindex(
+        columns=X_death.columns)
 
-    hep_events = int((df_hep["evenements_hepatiques_majeurs"] == 1).sum())
-    death_events = int((df_death["death"] == 1).sum())
+    print("\nFeature matrix dimensions:")
+    print(f"Hepatic: {X_hep.shape}")
+    print(f"Death:   {X_death.shape}")
 
-    print(
-        f"Hepatic features after missing filter: {len(keep_hep)} "
-        f"(EPV = {hep_events}/{len(keep_hep)} = {hep_events / max(len(keep_hep), 1):.2f})"
-    )
-    print(
-        f"Death features after missing filter: {len(keep_death)} "
-        f"(EPV = {death_events}/{len(keep_death)} = {death_events / max(len(keep_death), 1):.2f})"
-    )
+    # --------------------------------------------------------
+    # 5. Event statistics
+    # --------------------------------------------------------
 
-    # Cross-validation
-    print("Fitting Death — RSF (CV)...")
-    ci_rsf_death_mean, ci_rsf_death_std = cv_rsf(X_death_aln.astype("float32"), y_death)
-    print(f"  RSF C-index (CV): {ci_rsf_death_mean:.4f} ± {ci_rsf_death_std:.4f}")
+    hep_events = int(y_hep[y_hep.dtype.names[0]].sum())
 
-    print("Fitting Hepatic — RSF (CV)...")
-    ci_rsf_hep_mean, ci_rsf_hep_std = cv_rsf(X_hep_aln.astype("float32"), y_hep)
-    print(f"  RSF C-index (CV): {ci_rsf_hep_mean:.4f} ± {ci_rsf_hep_std:.4f}")
+    death_events = int(y_death[y_death.dtype.names[0]].sum())
 
-    # Final models
-    print("Training Death Model...")
-    model_death = make_rsf_pipeline()
-    model_death.fit(X_death_aln, y_death)
+    print("\nEvent statistics:")
 
-    print("Training Hepatic Model...")
-    model_hep = make_rsf_pipeline()
-    model_hep.fit(X_hep_aln, y_hep)
+    print(f"Hepatic events: {hep_events}")
 
-    # Optional exploration
-    # from skrub import TableReport
-    # TableReport(X_hep_aln)
-    # TableReport(X_death_aln)
+    print(f"Death events:   {death_events}")
 
-    # Test feature engineering
-    test_df_hep = apply_final_feature_engineering(test_df, task="hep")
-    test_df_death = apply_final_feature_engineering(test_df, task="death")
+    # --------------------------------------------------------
+    # Nested CVs: hepatic endpoint and death endpoint
+    # --------------------------------------------------------
 
-    X_pred_raw_hep = build_feature_matrix(test_df_hep)
-    X_pred_raw_death = build_feature_matrix(test_df_death)
+    nested_hep = nested_cv_rsf(X=X_hep, y=y_hep, outcome_name="Hepatic")
+    nested_death = nested_cv_rsf(X=X_death, y=y_death, outcome_name="Death")
 
-    # Align columns to training matrices
-    X_pred_hep = X_pred_raw_hep[keep_hep]
-    X_pred_death = X_pred_raw_death[keep_death]
+    # --------------------------------------------------------
+    # Finals models: hepatic and death
+    # --------------------------------------------------------
 
+    model_hep, search_hep = train_final_rsf(X=X_hep, y=y_hep, outcome_name="Hepatic",)
+    model_death, search_death = train_final_rsf(X=X_death, y=y_death, outcome_name="Death",)
+
+    # --------------------------------------------------------
     # Predictions
+    # --------------------------------------------------------
+
+    print("\nGenerating predictions...")
+
     preds_hep = model_hep.predict(X_pred_hep)
+
     preds_death = model_death.predict(X_pred_death)
 
-    submission = pd.DataFrame(
-        {
+    # --------------------------------------------------------
+    # Submission
+
+    submission = pd.DataFrame({
             "trustii_id": test_df["trustii_id"].values,
+
             "risk_hepatic_event": preds_hep,
-            "risk_death": preds_death,
-        }
-    )
+
+            "risk_death": preds_death})
 
     submission.to_csv(OUTPUT_PATH, index=False)
-    print(f"Saved {len(submission)} predictions to {OUTPUT_PATH}")
+
+    print("\n" + "=" * 65)
+    print("FINAL RESULTS")
+    print("=" * 65)
+
+    print(f"Hepatic nested CV: " 
+          f"{nested_hep['mean']:.4f} "
+          f"± {nested_hep['std']:.4f}")
+
+    print(f"Death nested CV:   "
+        f"{nested_death['mean']:.4f} "
+        f"± {nested_death['std']:.4f}")
+
+    print(f"\nSubmission saved: {OUTPUT_PATH}")
+
     print(submission.head())
 
-    return submission
+    return {
+        "submission": submission,
+
+        "model_hep": model_hep,
+
+        "model_death": model_death,
+
+        "nested_cv_hep": nested_hep,
+
+        "nested_cv_death": nested_death,
+
+        "search_hep": search_hep,
+
+        "search_death": search_death,
+    }
 
 
 if __name__ == "__main__":
-    run_pipeline()
+
+    results = train_validation_pipeline()
+
