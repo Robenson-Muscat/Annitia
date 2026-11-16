@@ -138,7 +138,6 @@ flowchart TD
 
 ## Running
 
-
 To train our model,
 
 ```
