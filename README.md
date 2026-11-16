@@ -64,7 +64,8 @@ The ANNITIA team has explored the clinical records of thousands of patients (who
 - Outcomes: occurrence of major liver events and all-cause mortality.
 - 22 data points describing the patient over time of each examen performed, with the corresponding age, BMI and biochemical parameters. Up to 3 NITs usually measured for assessing fibrosis progression.
 
-Please check out the [following page](https://app.trustii.io/datasets/1551) to download data. 
+Please check out the [following page](docs/INSTALL.md) to download data.
+
 
 
 ## Requirements
@@ -149,7 +150,7 @@ flowchart TD
 ```
 ### Training and validation
 
-Look *[`docs/train.md`](here).* for our method.
+Look *[here](`docs/train.md`)* for our method.
 
 
 
