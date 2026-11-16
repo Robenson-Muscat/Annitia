@@ -24,9 +24,9 @@ Importantly, feature selection and imputation are fitted exclusively on the trai
 
 Model performance and hyperparameter selection are assessed using a nested cross-validation strategy.
 
-The procedure consists of two levels:
+The procedure consists of two levels: 
 
-Outer cross-validation (4 folds)
+**Outer cross-validation (4 folds)**
 
 The dataset is divided into four folds using shuffled K-fold splitting with a fixed random seed.
 
@@ -37,27 +37,16 @@ For each iteration:
 
 This procedure provides an estimate of model generalization performance while limiting optimistic bias associated with hyperparameter selection.
 
-Inner cross-validation (3 folds)
+**Inner cross-validation (3 folds)**
 
 Within each outer training set, a 3-fold cross-validation procedure is used to optimize the Random Survival Forest hyperparameters.
 
-Hyperparameter optimization is performed using RandomizedSearchCV, with 30 randomly sampled parameter combinations.
-
-The search explores the following parameters:
-
-    n_estimators: number of trees in the forest.
-    min_samples_leaf: minimum number of samples required in a leaf.
-    min_samples_split: minimum number of samples required to split a node.
-    max_features: number of features considered when searching for the best split.
-    max_depth: maximum depth of each tree.
-    max_leaf_nodes: maximum number of leaf nodes.
-
-The best configuration is selected based on the mean inner cross-validation C-index.
+Hyperparameter optimization is performed using RandomizedSearchCV, with 30 randomly sampled parameter combinations. The best configuration is selected based on the mean inner cross-validation C-index.
 
 
 **5. Model evaluation**
 
-Model performance and hyperparameter selection are assessed using a nested cross-validation strategy.
+Model performance and hyperparameter selection are assessed using a **nested cross-validation strategy**.
 The optimized model from each outer fold is evaluated on its corresponding held-out validation fold.
 The evaluation metric is the Concordance Index (C-index), calculated using concordance_index_censored.
 
