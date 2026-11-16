@@ -7,7 +7,7 @@ Two independent survival prediction models are developed to predict the risk of 
 
 **2. Survival target construction**
 
-For each endpoint, survival targets are constructed using the observed event indicator and event time. The follow-up duration is calculated relative to the patient's baseline age (Age_v1):
+For each endpoint, survival targets are constructed using the observed event indicator and event time. The follow-up duration is calculated relative to the patient's baseline age :
 
 - Patients experiencing an event: survival time corresponds to the age at event occurrence minus baseline age.
 - Patients without an observed event: survival time corresponds to the last observed age minus baseline age. These patients are treated as right-censored observations.
@@ -17,14 +17,12 @@ Patients with missing event indicators, missing event times for observed events,
 
 Before model training, the feature matrices are constructed by removing longitudinal age variables to prevent information leakage.
 
-A dedicated preprocessing pipeline is then applied independently within each cross-validation training fold with a  *Missing-rate filtering* (features with more than 50% missing values are removed) and *median imputation* (better results than iterative imputation).
+A dedicated preprocessing pipeline is then applied independently within each cross-validation training fold with a  *missing-rate filtering* (features with more than 50% missing values are removed) and a *median imputation* (better results than iterative imputation).
 Importantly, feature selection and imputation are fitted exclusively on the training portion of each fold, preventing information from validation observations from influencing preprocessing.
 
 **4. Nested cross-validation and hyperparameter optimization**
 
-Model performance and hyperparameter selection are assessed using a **nested cross-validation strategy**.
-
-The procedure consists of two levels: 
+Model performance and hyperparameter selection are assessed using a **nested cross-validation strategy**. The procedure consists of two levels: 
 
 **Outer cross-validation (4 folds)**
 
@@ -68,10 +66,9 @@ These final models are subsequently used to generate predictions for the held-ou
 The trained models generate an individual risk score for each patient and each clinical endpoint.
 
 The final prediction file contains three columns:
-
-    trustii_id: patient identifier required for submission.
-    risk_hepatic_event: predicted hepatic event risk score.
-    risk_death: predicted mortality risk score.
+- trustii_id: patient identifier required for submission.
+- risk_hepatic_event: predicted hepatic event risk score.
+- risk_death: predicted mortality risk score.
 
 
 The trained models generate an individual risk score for each patient and each clinical endpoint.
@@ -137,7 +134,6 @@ flowchart TD
     class F,G,H,I,J,K,L,M,N,O,P,Q,X,Y,Z,AA process
     class R,S,T,U,V,W,AF validation
     class AE output
-
 ```
 
 ## Running
