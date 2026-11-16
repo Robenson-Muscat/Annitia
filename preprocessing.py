@@ -6,12 +6,6 @@ import pandas as pd
 #import skrub
 import sksurv
 
-from sklearn.base import BaseEstimator
-from sklearn.feature_selection import RFECV
-from sklearn.experimental import enable_iterative_imputer 
-from sklearn.impute import IterativeImputer, SimpleImputer
-from sklearn.inspection import permutation_importance
-
 
 warnings.filterwarnings("ignore")
 
@@ -24,7 +18,7 @@ TARGET_COLS = [
     "evenements_hepatiques_majeurs",
     "evenements_hepatiques_age_occur",
     "death",
-    "death_age_occur",
+    "death_age_occur"
 ]
 
 ID_COLS = ["patient_id_anon", "trustii_id"]
@@ -46,6 +40,19 @@ BIOMARKERS = [
 
 
 def create_change_scores(df, baseline_visit=1):
+    """
+    Calculates the percentage change of each longitudinal variable
+    relative to its value at the baseline visit.
+
+    Parameters:
+    - df: DataFrame containing longitudinal data.
+    - baseline_visit: Reference visit number (default: 1).
+
+    Returns:
+    - DataFrame containing new percentage change variables
+      (change_variable_name_vX).
+    """
+    
     df = df.copy()
 
     longitudinal_cols = [col for col in df.columns if "_v" in col]
@@ -71,13 +78,26 @@ def create_change_scores(df, baseline_visit=1):
             df[new_col] = np.where(
                 baseline.notna() & current.notna() & (baseline != 0),
                 (current - baseline) / baseline * 100.0,
-                np.nan,
-            )
+                np.nan)
 
     return df
 
 
 def compute_patient_slopes_theilsen(df, biomarkers=BIOMARKERS, max_visit=22):
+    """
+    Calculates an individual longitudinal slope for each biomarker
+    using the robust Theil-Sen estimator.
+
+    For each patient, the slope is defined as the median of all pairwise
+    slopes calculated between available measurements.
+
+    Age at each visit is used as the time variable.
+
+    Returns:
+    - DataFrame enriched with one slope_ts variable per biomarker,
+      representing its rate of change per unit of age.
+    """
+    
     df = df.copy()
 
     def theil_sen_slope(x, y):
@@ -133,6 +153,18 @@ def compute_patient_slopes_theilsen(df, biomarkers=BIOMARKERS, max_visit=22):
 
 
 def count_non_na_longitudinal(df):
+    """
+    Counts the number of non-missing measurements for each longitudinal
+    variable and each patient.
+
+    Variables are grouped according to their prefix to determine
+    the number of visits at which each variable was measured.
+
+    Returns:
+    - DataFrame enriched with one n_variable_name column for each
+      longitudinal variable.
+    """
+    
     df = df.copy()
 
     longitudinal_cols = [col for col in df.columns if "_v" in col]
@@ -147,6 +179,22 @@ def count_non_na_longitudinal(df):
 
 
 def add_first_last_visits(df, biomarkers=BIOMARKERS, max_visit=22):
+    """
+    Identifies the first and last visits at which each biomarker
+    was measured for each patient.
+
+    Parameters:
+    - df: DataFrame containing longitudinal data.
+    - biomarkers: List of biomarkers to analyze.
+    - max_visit: Maximum visit number to consider.
+
+    Returns:
+    - DataFrame enriched with two variables per biomarker:
+      first_biomarker and last_biomarker.
+
+    Patients with no available measurements are assigned a value of 0.
+    """
+    
     df = df.copy()
 
     for biom in biomarkers:
@@ -167,12 +215,10 @@ def add_first_last_visits(df, biomarkers=BIOMARKERS, max_visit=22):
 
         first_visit = mask.apply(
             lambda row: visit_numbers[row.values].min() if row.any() else 0,
-            axis=1,
-        )
+            axis=1)
         last_visit = mask.apply(
             lambda row: visit_numbers[row.values].max() if row.any() else 0,
-            axis=1,
-        )
+            axis=1)
 
         df[f"first_{biom}"] = first_visit
         df[f"last_{biom}"] = last_visit
@@ -181,6 +227,17 @@ def add_first_last_visits(df, biomarkers=BIOMARKERS, max_visit=22):
 
 
 def add_visit_metrics(df, max_visit=22):
+    """
+    Calculates the age difference between two consecutive visits
+    for each patient.
+
+    This variable is used to characterize the time interval
+    between successive examinations.
+
+    Returns:
+    - DataFrame enriched with an age_diff_vX variable for each visit.
+    """
+    
     df = df.copy()
 
     for v in range(1, max_visit + 1):
@@ -202,6 +259,23 @@ def add_visit_metrics(df, max_visit=22):
 
 
 def add_patient_summary_metrics(df, biomarkers=BIOMARKERS, max_visit=22):
+    """
+    Computes several longitudinal summary metrics describing
+    each patient's follow-up and biomarker evolution.
+
+    Calculated metrics:
+    - mean_age_diff: Mean age difference between consecutive visits.
+    - age_range: Difference between the maximum and minimum observed age.
+    - mean_n_measures: Average number of available measurements per visit.
+    - min_biomarker: Minimum observed biomarker value.
+    - max_biomarker: Maximum observed biomarker value.
+    - biomarker_range: Range between maximum and minimum values.
+    - mean_biomarker_diff: Mean difference between successive
+      longitudinal measurements.
+
+    Returns:
+    - DataFrame enriched with patient-level summary metrics.
+    """
     df = df.copy()
 
     age_cols = [
@@ -220,9 +294,7 @@ def add_patient_summary_metrics(df, biomarkers=BIOMARKERS, max_visit=22):
         else:
             df["mean_age_diff"] = np.nan
 
-        df["age_range"] = (
-            df[age_cols].max(axis=1, skipna=True) - df[age_cols].min(axis=1, skipna=True)
-        )
+        df["age_range"] = (df[age_cols].max(axis=1, skipna=True) - df[age_cols].min(axis=1, skipna=True))
     else:
         df["mean_age_diff"] = np.nan
         df["age_range"] = np.nan
@@ -254,10 +326,7 @@ def add_patient_summary_metrics(df, biomarkers=BIOMARKERS, max_visit=22):
         df[f"max_{biom}"] = df[biom_cols].max(axis=1, skipna=True)
         df[f"{biom}_range"] = (df[f"max_{biom}"] - df[f"min_{biom}"]).fillna(0)
 
-        diffs = [
-            df[biom_cols[i]] - df[biom_cols[i - 1]]
-            for i in range(1, len(biom_cols))
-        ]
+        diffs = [df[biom_cols[i]] - df[biom_cols[i - 1]] for i in range(1, len(biom_cols))]
         if diffs:
             df[f"mean_{biom}_diff"] = pd.concat(diffs, axis=1).mean(axis=1, skipna=True)
         else:
@@ -267,6 +336,18 @@ def add_patient_summary_metrics(df, biomarkers=BIOMARKERS, max_visit=22):
 
 
 def add_exam_within_2y_count(df, age_prefix="Age_v", out_col="n_exams_within_2y"):
+    """
+    Counts, for each patient, the number of intervals between
+    consecutive examinations that are less than or equal to two years.
+
+    Patient ages are sorted chronologically before calculating
+    the intervals.
+
+
+    Returns:
+    - DataFrame enriched with a variable indicating the number
+      of examination intervals lasting two years or less.
+    """
     df = df.copy()
 
     age_cols = [c for c in df.columns if c.startswith(age_prefix)]
@@ -288,6 +369,27 @@ def add_exam_within_2y_count(df, age_prefix="Age_v", out_col="n_exams_within_2y"
 
 
 def create_metabolic_syndrome(df, visits=range(1, 23)):
+    """
+    Constructs a metabolic syndrome proxy score at each visit
+    based on several metabolic risk factors.
+
+    Criteria considered:
+    - BMI >= 30.
+    - Fasting glucose >= 5.6.
+    - Triglycerides >= 1.5.
+    - Presence of hypertension.
+    - Presence of type 2 diabetes mellitus.
+    - Presence of dyslipidaemia.
+
+    Each fulfilled criterion contributes one point to the score.
+
+    Returns:
+    - DataFrame enriched with:
+      - metabolic_syndrome_max: Maximum score observed during follow-up.
+      - metabolic_syndrome_mean: Mean score across available visits.
+
+    Visit-specific scores are removed after aggregation.
+    """
     df = df.copy()
     ms_cols = []
 
@@ -334,6 +436,17 @@ def create_metabolic_syndrome(df, visits=range(1, 23)):
 
 
 def create_alt_ast_ratio(df, max_visit=21, drop_originals=True):
+    """
+    Calculates the ALT/AST ratio at each available visit.
+
+    The ratio is defined as the alanine aminotransferase (ALT)
+    concentration divided by the aspartate aminotransferase (AST)
+    concentration.
+
+    Parameters:
+    - drop_originals: Whether the original ALT and AST variables
+      should be removed after calculating the ratios.
+    """
     df = df.copy()
 
     for v in range(1, max_visit + 1):
@@ -362,6 +475,10 @@ def create_alt_ast_ratio(df, max_visit=21, drop_originals=True):
 
 
 def create_alt_ast_max(df, max_visit=21):
+    """
+    Calculates the ALT/AST ratio at each visit and identifies
+    the maximum ratio observed during each patient's follow-up.
+    """
     df = df.copy()
     ratio_cols = []
 
@@ -386,6 +503,26 @@ def create_alt_ast_max(df, max_visit=21):
 
 
 def create_cirrhosis_proxy(df, visits=range(1, 23)):
+    """
+    Constructs a cirrhosis proxy score using several biological
+    and non-invasive markers available at each visit.
+
+    Criteria considered:
+    - Bilirubin > 20.
+    - Platelet count < 150.
+    - GGT > 60.
+    - Liver stiffness > 10.
+    - FibroTest > 0.7.
+
+    Each fulfilled criterion contributes one point to the score.
+
+    A visit is considered only if at least three out of the five
+    variables are available in the DataFrame.
+
+    Returns:
+    - DataFrame enriched with cirrhosis_score_max, representing
+      the maximum score observed during follow-up.
+    """
     df = df.copy()
     cirr_cols = []
 
@@ -430,6 +567,24 @@ def add_fibrotest_stage_features(
     score_prefix="fibrotest_BM_2",
     keep_visit_columns=False,
 ):
+    """
+    Converts continuous FibroTest values into simplified fibrosis
+    stages and generates several longitudinal summary indicators.
+
+    Classification:
+    - Stage 0: FibroTest < 0.21.
+    - Stage 1: 0.21 <= FibroTest < 0.31.
+    - Stage 2: 0.31 <= FibroTest < 0.58.
+    - Stage 3: 0.58 <= FibroTest < 0.74.
+    - Stage 4: FibroTest >= 0.74.
+
+    Generated features:
+    - fibrotest_max: Maximum FibroTest value observed.
+    - fibrosis_stage_max: Maximum fibrosis stage observed.
+    - fibrosis_F3_or_more: Number of visits with a fibrosis stage >= 3.
+    - fibrosis_F4_any: Indicator of at least one observed stage 4.
+
+    """
     df = df.copy()
     coarse_cols = []
 
@@ -458,8 +613,7 @@ def add_fibrotest_stage_features(
     score_cols = [
         f"{score_prefix}_v{v}"
         for v in visits
-        if f"{score_prefix}_v{v}" in df.columns
-    ]
+        if f"{score_prefix}_v{v}" in df.columns]
 
     if score_cols:
         df["fibrotest_max"] = df[score_cols].max(axis=1, skipna=True).fillna(0)
@@ -496,105 +650,26 @@ def extract_last_observed_age(df):
     last_idx_age = np.where(
         mask_age.any(axis=1),
         age_matrix.shape[1] - 1 - np.argmax(mask_age[:, ::-1], axis=1),
-        -1,
-    )
+        -1)
 
     df["last_observed_age"] = np.where(
         last_idx_age >= 0,
         age_matrix[np.arange(len(df)), last_idx_age],
-        np.nan,
-    )
+        np.nan)
 
     return df
 
 
-def extract_last_available_values(df, remove=True, n_last=5):
-    df = df.copy()
 
-    age_cols = sorted(
-        [c for c in df.columns if re.match(r"Age_v\d+", c)],
-        key=lambda x: int(re.findall(r"\d+", x)[0]),
-    )
-
-    if "num_visits" not in df.columns:
-        if age_cols:
-            df["num_visits"] = df[age_cols].notna().sum(axis=1)
-        else:
-            df["num_visits"] = 0
-
-    if "last_observed_age" not in df.columns:
-        if age_cols:
-            age_matrix = df[age_cols].to_numpy(dtype=float)
-            mask_age = ~np.isnan(age_matrix)
-            last_idx_age = np.where(
-                mask_age.any(axis=1),
-                age_matrix.shape[1] - 1 - np.argmax(mask_age[:, ::-1], axis=1),
-                -1,
-            )
-            df["last_observed_age"] = np.where(
-                last_idx_age >= 0,
-                age_matrix[np.arange(len(df)), last_idx_age],
-                np.nan,
-            )
-        else:
-            df["last_observed_age"] = np.nan
-
-    visit_cols_to_drop = list(age_cols) if remove else []
-
-    for biom in BIOMARKERS:
-        biom_cols = sorted(
-            [c for c in df.columns if re.match(fr"{re.escape(biom)}_v\d+", c)],
-            key=lambda x: int(re.findall(r"\d+", x)[0]),
-        )
-
-        if not biom_cols:
-            continue
-
-        biom_matrix = df[biom_cols].to_numpy(dtype=float)
-        reversed_matrix = np.flip(biom_matrix, axis=1)
-
-        last_values = [[] for _ in range(n_last)]
-
-        for i in range(reversed_matrix.shape[0]):
-            row = reversed_matrix[i]
-            vals = row[~np.isnan(row)][:n_last]
-            vals = list(vals) + [np.nan] * (n_last - len(vals))
-
-            for j in range(n_last):
-                last_values[j].append(vals[j])
-
-        for j in range(n_last):
-            col_name = f"{biom}_last" if j == 0 else f"{biom}_last_minus{j}"
-            df[col_name] = last_values[j]
-
-        if remove:
-            visit_cols_to_drop.extend(biom_cols)
-
-    df = df.drop(columns=visit_cols_to_drop, errors="ignore")
-
-    event_cols = [
-        "evenements_hepatiques_majeurs",
-        "evenements_hepatiques_age_occur",
-        "death",
-        "death_age_occur",
-    ]
-    event_cols = [c for c in event_cols if c in df.columns]
-    other_cols = [c for c in df.columns if c not in event_cols]
-    df = df[other_cols + event_cols]
-
-    return df
-
-
-def extract_last_available_values(df, remove = True):
+def extract_last_available_values(df, remove = True, N_LAST = 5):
         df = df.copy()
 
         # -----------------------------
-            # 1. Age columns
+        #  Age columns
         # -----------------------------
         age_cols = sorted(
             [c for c in df.columns if re.match(r"Age_v\d+", c)],
-            key=lambda x: int(re.findall(r"\d+", x)[0])
-        )
+            key=lambda x: int(re.findall(r"\d+", x)[0]))
 
         age_matrix = df[age_cols].to_numpy()
         mask_age = ~np.isnan(age_matrix)
@@ -602,7 +677,7 @@ def extract_last_available_values(df, remove = True):
         # num_visits
         #df["num_visits"] = mask_age.sum(axis=1)
 
-        # last observed age (indépendant maintenant)
+        # last observed age 
         rev_idx_age = np.argmax(mask_age[:, ::-1], axis=1)
         last_idx_age = age_matrix.shape[1] - 1 - rev_idx_age
         last_idx_age[df["num_visits"] == 0] = -1
@@ -614,26 +689,16 @@ def extract_last_available_values(df, remove = True):
         #)
 
         # -----------------------------
-        # 2. Biomarkers
+        #  Biomarkers
         # -----------------------------
-        biomarkers = [
-            "BMI", "alt", "ast", "bilirubin", "chol", "ggt",
-            "gluc_fast", "plt", "triglyc",
-            "aixp_aix_result_BM_3",
-            "fibrotest_BM_2",
-            "fibs_stiffness_med_BM_1"
-        ]
+
 
         visit_cols_to_drop = []
 
-
-        N_LAST = 5 # 
-
-        for biom in biomarkers:
+        for biom in BIOMARKERS:
             biom_cols = sorted(
                 [c for c in df.columns if re.match(fr"{biom}_v\d+", c)],
-                key=lambda x: int(re.findall(r"\d+", x)[0])
-            )
+                key=lambda x: int(re.findall(r"\d+", x)[0]))
 
             if not biom_cols:
                 continue
@@ -646,7 +711,7 @@ def extract_last_available_values(df, remove = True):
 
             for i in range(reversed_matrix.shape[0]):
                 row = reversed_matrix[i]
-                vals = row[~np.isnan(row)][:N_LAST]  # 👈 prend les N dernières non-NaN
+                vals = row[~np.isnan(row)][:N_LAST]  
 
                 # padding
                 vals = list(vals) + [np.nan] * (N_LAST - len(vals))
@@ -667,18 +732,13 @@ def extract_last_available_values(df, remove = True):
             visit_cols_to_drop.extend(biom_cols)
 
         # -----------------------------
-        # 3. Drop longitudinal columns
+        #  Drop longitudinal columns
         # -----------------------------
         df.drop(columns=visit_cols_to_drop, inplace=True, errors="ignore")
 
         # ---------------------------
         # -----------------------------
-        event_cols = [
-            "evenements_hepatiques_majeurs",
-            "evenements_hepatiques_age_occur",
-            "death",
-            "death_age_occur"
-        ]
+        event_cols = TARGET_COLS
 
         event_cols = [c for c in event_cols if c in df.columns]
         other_cols = [c for c in df.columns if c not in event_cols]
@@ -725,7 +785,7 @@ def apply_final_feature_engineering(df, task="hep", dummy_cols=None):
         df = count_non_na_longitudinal(df)
         df = create_change_scores(df)
         df = compute_patient_slopes_theilsen(df)
-        df = add_patient_summary_metrics(df)
+        #df = add_patient_summary_metrics(df)
         df = add_first_last_visits(df)
         df = add_visit_metrics(df)
         df = add_exam_within_2y_count(df)
