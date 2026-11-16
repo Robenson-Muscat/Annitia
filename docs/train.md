@@ -92,7 +92,7 @@ The final prediction file contains three columns:
 The trained models generate an individual risk score for each patient and each clinical endpoint.
 The resulting predictions are saved in a CSV file.
 
-
+```mermaid
 flowchart TD
     A["Processed training dataset"] --> B["Task-specific feature engineering"]
     B --> C{"Prediction endpoint"}
@@ -153,14 +153,7 @@ flowchart TD
     class R,S,T,U,V,W,AF validation
     class AE output
 
-
-
-## Data
-
-The NTURGB+D 2D detection results are provided by [pyskl](https://github.com/kennymckormick/pyskl/blob/main/tools/data/README.md) using HRNet.
-
-1. Download [`ntu60_hrnet.pkl`](https://download.openmmlab.com/mmaction/pyskl/data/nturgbd/ntu60_hrnet.pkl) and  [`ntu120_hrnet.pkl`](https://download.openmmlab.com/mmaction/pyskl/data/nturgbd/ntu120_hrnet.pkl) to  `data/action/`. 
-2. Download the 1-shot split [here](https://1drv.ms/f/s!AvAdh0LSjEOlfi-hqlHxdVMZxWM) and put it to  `data/action/`. 
+```
 
 ## Running
 
