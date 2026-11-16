@@ -116,7 +116,7 @@ Mortality prediction : incorporates additional longitudinal information, includi
 
 The resulting datasets contain engineered patient-level features tailored to each prediction task and are ready for subsequent modelling.
 
-The complete preprocessing workflow is implemented in *[`preprocessing.py`](here).*
+The complete preprocessing workflow is implemented in *[`preprocessing.py`](preprocessing.py).*
 
 ```mermaid
 flowchart TD
@@ -150,7 +150,7 @@ flowchart TD
 ```
 ### Training and validation
 
-Look *[`docs/train.md`](here)* for our method.
+Look *[`docs/TRAIN.md`](docs/TRAIN.md)* for our method.
 
 
 
